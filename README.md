@@ -1,0 +1,80 @@
+# SelfRead
+
+Своя библиотека книг и аудиокниг на домашнем сервере: медиатеки (общие и личные), полки, статусы чтения, прогресс, три палитры интерфейса. Работает в Docker на Synology, как «Мои рецепты» и SelfMusic.
+
+- Порт: **1334**
+- База: встроенная SQLite или MariaDB (выбирается в мастере первого запуска)
+- Стек: FastAPI + SQLAlchemy/Alembic, React + Vite + Tailwind
+
+## Что уже есть (каркас)
+
+- Мастер установки: база данных → администратор → медиатеки (можно пропустить).
+- Регистрация открытая или закрытая, пользователи и доступ — в «Управлении».
+- **Медиатеки**: общая (папка на сервере, доступ по пользователям) или личная (видит только владелец; папка `media/<логин>/books` создаётся сама или выбирается на сервере).
+- **Сканер**: находит книги, читает метаданные и обложки, пересканирует только изменённое, по расписанию.
+  - EPUB, FB2, FB2.ZIP/FBZ, MOBI, AZW, AZW3, PDF, DjVu, CBZ — название, автор, серия, аннотация, обложка;
+  - CBR, CB7, TXT, RTF, DOC/DOCX, ODT, HTML, CHM — по имени файла (`Автор - Название.fb2` тоже понимается);
+  - аудиокниги: папка с MP3/M4A/OGG/OPUS/FLAC (подпапки CD1/Disc 2 склеиваются) или один .m4b с главами;
+  - одинаковые имена в одной папке (`Книга.epub` + `Книга.fb2`) — одна книга в нескольких форматах;
+  - библиотека Calibre: `metadata.opf` и `cover.jpg` рядом с книгой подхватываются.
+- Статусы: хочу прочитать, читаю, прочитано, брошено; оценка 1–5; прогресс.
+- Полки: личные и общие (видны всем, менять может владелец).
+- Оформление: палитры «Бумага», «Чернила», «Библиотека» и автопереключение день/ночь — в профиле.
+- PWA: устанавливается на телефон.
+
+Следующий этап — читалка (EPUB/FB2/MOBI/AZW3/CBZ через foliate-js, PDF через pdf.js, DjVu через djvu.js, конвертация DOCX/RTF/ODT через Calibre) и полноценный плеер аудиокниг.
+
+## Synology: установка и автодеплой из Gitea
+
+Раскладка — как у других проектов:
+
+```
+/volume1/docker/selfread/
+├── app/      git-клон (код; автодеплой обновляет только его)
+├── data/     конфиг, ключ, обложки, аватарки (и база, если SQLite)
+├── media/    личные медиатеки пользователей: <логин>/books
+└── .env      настройки этого сервера
+```
+
+1. Клон (по SSH под root):
+   ```bash
+   mkdir -p /volume1/docker/selfread
+   git clone https://git.nskarl.ru/nskarl/selfread.git /volume1/docker/selfread/app
+   ```
+2. `.env` в `/volume1/docker/selfread/` (папки с книгами — когда появятся, можно позже):
+   ```
+   DATA_PATH=/volume1/docker/selfread/data
+   MEDIA_PATH=/volume1/docker/selfread/media
+   # BOOKS_DIR=/volume2/books
+   # AUDIOBOOKS_DIR=/volume2/audiobooks
+   ```
+   Ещё папки — в `app/docker-compose.override.yml` (не в git):
+   ```yaml
+   services:
+     app:
+       volumes:
+         - /volume1/comics:/library/comics:ro
+   ```
+3. Скрипт деплоя: скопируйте `selfmusic-deploy.sh` в `/volume1/docker/deploy/selfread-deploy.sh` и замените в нём `selfmusic` на `selfread`. Первый запуск: `sh /volume1/docker/deploy/selfread-deploy.sh --force`.
+4. Планировщик задач DSM — по аналогии с другими проектами.
+5. Обратный прокси DSM: домен (например, `read.nskarl.ru`) → `http://localhost:1334`. WebSocket не нужен.
+
+MariaDB: контейнер подключается к внешней сети `db` (хост `db`). Базу создайте заранее:
+
+```sql
+CREATE DATABASE selfread CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+Мастер первого запуска без `SETUP_TOKEN` открывается только из локальной сети.
+
+## Разработка
+
+```bash
+# бэкенд
+cd backend && pip install -r requirements.txt
+DATA_DIR=../data MEDIA_ROOT=../books UPLOAD_ROOT=../media uvicorn app.main:app --reload --port 1334
+# фронтенд
+cd frontend && npm install && npm run dev   # http://localhost:5173, API проксируется на 1334
+```
+
+Для обложек PDF и DjVu нужны `pdftoppm` (poppler) и `ddjvu` (djvulibre) — в Docker-образе они есть.

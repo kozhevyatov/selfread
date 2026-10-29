@@ -1,0 +1,51 @@
+name: selfread
+
+services:
+  app:
+    build: .
+    image: selfread:latest
+    container_name: selfread
+    restart: unless-stopped
+    ports:
+      - "1334:1334"
+    # Раскладка на сервере (пути задаются в .env, его передаёт скрипт деплоя):
+    #   /volume1/docker/selfread/
+    #     app/    — этот репозиторий (код; деплой трогает только его)
+    #     data/   — конфиг, ключ, обложки, аватарки (и база, если SQLite)
+    #     media/  — личные медиатеки пользователей: <логин>/books
+    #     .env    — пути и настройки этого сервера
+    # Без .env (разработка) — папки ./data и ./media рядом с этим файлом.
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+      - ${MEDIA_PATH:-./media}:/uploads
+
+      # Общие папки с книгами. Всё, что смонтировано внутрь /library, видно в «обзоре папок»
+      # при создании медиатеки в управлении. :ro — только чтение.
+      # Пути задаются в .env (BOOKS_DIR=/volume2/books). Пока их нет — подключаются пустые
+      # папки, контейнер всё равно запустится.
+      - ${BOOKS_DIR:-./books}:/library/books:ro
+      - ${AUDIOBOOKS_DIR:-./audiobooks}:/library/audiobooks:ro
+      # Ещё папки — в docker-compose.override.yml (он не в git):
+      # - /volume1/comics:/library/comics:ro
+    networks:
+      - db                                 # сеть с контейнером MariaDB (хост db)
+    environment:
+      TZ: Asia/Novosibirsk
+      # Мастер первого запуска без токена открывается только из локальной сети.
+      # Если настраиваете снаружи (через интернет) — задайте токен, мастер его спросит.
+      # SETUP_TOKEN: "придумайте-длинную-строку"
+
+      # Если указать, шаг выбора БД в мастере пропускается.
+      # DATABASE_URL: "mysql+pymysql://selfread:ПАРОЛЬ@db:3306/selfread?charset=utf8mb4"
+
+      # Секрет для JWT. Если не задан — генерируется в /data/secret.key
+      # SECRET_KEY: ""
+
+    # Чтобы созданные файлы принадлежали вашему пользователю DSM, а не root,
+    # укажите его uid:gid (узнать: id ИМЯ по SSH). Папки data/ и media/ должны быть доступны ему на запись.
+    # user: "1026:100"
+
+networks:
+  db:
+    external: true
+    name: db

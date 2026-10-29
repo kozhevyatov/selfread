@@ -1,0 +1,15 @@
+.git
+.gitignore
+**/node_modules
+**/dist
+**/__pycache__
+**/*.pyc
+**/.venv
+data
+uploads
+.env
+*.md
+media
+mobile
+books
+audiobooks
