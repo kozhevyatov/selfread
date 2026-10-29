@@ -13,6 +13,7 @@ import BooksPage from "@/pages/BooksPage";
 import HomePage from "@/pages/HomePage";
 import LoginPage from "@/pages/LoginPage";
 import ProfilePage from "@/pages/ProfilePage";
+import ReaderPage from "@/pages/ReaderPage";
 import RegisterPage from "@/pages/RegisterPage";
 import SetupPage from "@/pages/SetupPage";
 import ShelvesPage, { ShelfPage } from "@/pages/ShelvesPage";
@@ -76,6 +77,7 @@ export default function App() {
           { path: "/search", element: <BooksPage mode="search" /> },
           { path: "/libraries/:id", element: <BooksPage mode="library" /> },
           { path: "/books/:id", element: <BookPage /> },
+          { path: "/read/:id", element: <ReaderPage /> },
           { path: "/shelves", element: <ShelvesPage /> },
           { path: "/shelves/:id", element: <ShelfPage /> },
           { path: "/profile", element: <ProfilePage /> },

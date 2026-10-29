@@ -2,12 +2,15 @@
  * Нужен для установки на телефон (PWA) и быстрого запуска:
  * - оболочка (HTML) — сначала сеть, без сети — кэш;
  * - собранные файлы /assets/* и обложки книг — сначала кэш;
- * - API и файлы книг не кэшируются здесь (офлайн-чтение появится вместе с читалкой).
+ * - движок читалки /foliate/* — сначала кэш (большой, меняется редко);
+ * - API и файлы книг не кэшируются здесь.
  */
 const VERSION = "v1";
 const SHELL = `shell-${VERSION}`;
 const STATIC = `static-${VERSION}`;
 const COVERS = "covers-v1";
+// движок читалки (foliate-js, pdf.js): при обновлении файлов в public/foliate поменять номер
+const READER = "reader-v1";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(SHELL).then((c) => c.addAll(["/", "/manifest.json", "/favicon.svg"])));
@@ -15,7 +18,7 @@ self.addEventListener("install", (event) => {
 });
 
 self.addEventListener("activate", (event) => {
-  const keep = [SHELL, STATIC, COVERS];
+  const keep = [SHELL, STATIC, COVERS, READER];
   event.waitUntil(
     caches
       .keys()
@@ -63,6 +66,10 @@ self.addEventListener("fetch", (event) => {
   }
   if (url.pathname.startsWith("/assets/")) {
     event.respondWith(cacheFirst(request, STATIC, 200));
+    return;
+  }
+  if (url.pathname.startsWith("/foliate/")) {
+    event.respondWith(cacheFirst(request, READER, 400));
     return;
   }
   if (/^\/api\/books\/\d+\/cover$/.test(url.pathname)) {

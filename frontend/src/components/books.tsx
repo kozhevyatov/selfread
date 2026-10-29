@@ -199,7 +199,7 @@ export function ReadingCard({ book }: { book: Book }) {
         ? `осталось ~${Math.max(1, Math.round(book.pages * (1 - book.state.progress)))} стр.`
         : "";
   return (
-    <Link to={`/books/${book.id}`} className="card flex gap-4 p-4 text-fg transition hover:-translate-y-0.5">
+    <Link to={audio ? `/books/${book.id}` : `/read/${book.id}`} className="card flex gap-4 p-4 text-fg transition hover:-translate-y-0.5">
       <div className="w-[78px] shrink-0">
         <BookCover book={book} size="sm" />
       </div>

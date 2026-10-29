@@ -4,8 +4,10 @@ import { ArrowLeft, BookOpen, Download, Headphones, LibraryBig, Lock, Play, User
 import { Section } from "@/components/Section";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Badge, ErrorBox, PageLoader } from "@/components/ui/misc";
-import { api, audioUrl, fileUrl, type BookDetail, type ReadStatus } from "@/lib/api";
+import { api, fileUrl, type BookDetail, type ReadStatus } from "@/lib/api";
+import { canRead } from "@/lib/bookSources";
 import { dialogs } from "@/lib/dialogs";
+import { chaptersOf, currentChapter, player, usePlayer } from "@/lib/player";
 import { formatDuration, formatSize, formatTime, pagesLabel, percent } from "@/lib/format";
 import { setQueryData, useQuery } from "@/lib/query";
 import { Link, navigate, useParams } from "@/lib/router";
@@ -67,40 +69,32 @@ function StatusPicker({ book }: { book: BookDetail }) {
   );
 }
 
-/** Простой плеер аудиокниги: список файлов и стандартный проигрыватель (полноценный — следующим этапом). */
+/** Файлы или главы аудиокниги: клик — слушать с этого места. */
 function AudioFiles({ book }: { book: BookDetail }) {
-  const [current, setCurrent] = useState<number | null>(null);
+  const p = usePlayer();
+  const current = p.book?.id === book.id ? currentChapter(p) : null;
+  const chapters = chaptersOf(book);
   return (
     <div className="card overflow-hidden">
-      {current !== null && (
-        <div className="border-b bg-surface-2 p-3">
-          <p className="mb-2 truncate px-1 text-sm font-semibold">{book.files[current]?.title ?? book.files[current]?.name}</p>
-          <audio
-            key={current}
-            src={audioUrl(book.id, current)}
-            controls
-            autoPlay
-            className="w-full"
-            onEnded={() => setCurrent((c) => (c !== null && c + 1 < book.files.length ? c + 1 : null))}
-          />
-        </div>
-      )}
       <ol className="max-h-[420px] divide-y overflow-y-auto">
-        {book.files.map((f, i) => (
-          <li key={i} className={cn("flex items-center gap-3 px-3 py-1.5", current === i && "bg-accent-soft")}>
-            <button
-              type="button"
-              aria-label={`Слушать: ${f.title ?? f.name}`}
-              onClick={() => setCurrent(i)}
-              className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-accent-ink hover:bg-surface-2"
-            >
-              <Play className="size-4 fill-current" />
-            </button>
-            <span className="num w-7 shrink-0 text-sm text-faint">{i + 1}</span>
-            <span className="min-w-0 flex-1 truncate">{f.title || f.name}</span>
-            <span className="num text-sm text-muted">{formatTime(f.duration)}</span>
-          </li>
-        ))}
+        {chapters.map((c, i) => {
+          const active = current !== null && current.index === c.index && current.start === c.start;
+          return (
+            <li key={i} className={cn("flex items-center gap-3 px-3 py-1.5", active && "bg-accent-soft")}>
+              <button
+                type="button"
+                aria-label={`Слушать: ${c.title}`}
+                onClick={() => player.open(book, { index: c.index, time: c.start })}
+                className="flex size-10 shrink-0 items-center justify-center rounded-[10px] text-accent-ink hover:bg-surface-2"
+              >
+                <Play className="size-4 fill-current" />
+              </button>
+              <span className="num w-7 shrink-0 text-sm text-faint">{i + 1}</span>
+              <span className={cn("min-w-0 flex-1 truncate", active && "font-semibold text-accent-ink")}>{c.title}</span>
+              <span className="num text-sm text-muted">{formatTime(c.end - c.start)}</span>
+            </li>
+          );
+        })}
       </ol>
     </div>
   );
@@ -136,19 +130,20 @@ export default function BookPage() {
         <div className="mx-auto flex w-full max-w-[240px] flex-col gap-4">
           <BookCover book={book} size="lg" />
           {audio ? (
-            <a href="#files" className={buttonClass("primary", "lg")}>
-              <Headphones className="size-5" /> Слушать
-            </a>
-          ) : ["pdf", "txt"].includes(book.format) ? (
-            <a href={fileUrl(book.id)} target="_blank" rel="noreferrer" className={buttonClass("primary", "lg")}>
-              <BookOpen className="size-5" /> Открыть
-            </a>
+            <Button size="lg" onClick={() => player.open(book)}>
+              <Headphones className="size-5" />
+              {book.state.progress > 0 && book.state.status !== "finished" ? `Продолжить · ${percent(book.state.progress)}` : "Слушать"}
+            </Button>
+          ) : canRead(book) ? (
+            <Link to={`/read/${book.id}`} className={buttonClass("primary", "lg")}>
+              <BookOpen className="size-5" /> {book.state.progress > 0 && book.state.status !== "finished" ? `Продолжить · ${percent(book.state.progress)}` : "Читать"}
+            </Link>
           ) : (
             <div className="flex flex-col gap-1.5">
-              <button type="button" disabled className={buttonClass("primary", "lg", "w-full")}>
-                <BookOpen className="size-5" /> Читать
-              </button>
-              <span className="text-center text-xs text-muted">Читалка — следующий этап. Пока можно скачать файл ниже.</span>
+              <a href={fileUrl(book.id, book.format, true)} className={buttonClass("primary", "lg", "w-full")}>
+                <Download className="size-5" /> Скачать
+              </a>
+              <span className="text-center text-xs text-muted">Формат {book.format.toUpperCase()} пока открывается только в другом приложении.</span>
             </div>
           )}
           <Button variant="outline" onClick={() => dialogs.addToShelf([book.id])}>
@@ -232,7 +227,7 @@ export default function BookPage() {
           )}
 
           <div id="files" className="flex scroll-mt-20 flex-col gap-3">
-            <h2 className="title-display text-2xl">{audio ? "Файлы" : "Форматы"}</h2>
+            <h2 className="title-display text-2xl">{audio ? (book.chapters.length > 1 ? "Главы" : "Файлы") : "Форматы"}</h2>
             {audio ? (
               <AudioFiles book={book} />
             ) : (

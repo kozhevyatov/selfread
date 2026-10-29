@@ -22,9 +22,9 @@ services:
       # Общие папки с книгами. Всё, что смонтировано внутрь /library, видно в «обзоре папок»
       # при создании медиатеки в управлении. :ro — только чтение.
       # Пути задаются в .env (BOOKS_DIR=/volume2/books). Пока их нет — подключаются пустые
-      # папки, контейнер всё равно запустится.
-      - ${BOOKS_DIR:-./books}:/library/books:ro
-      - ${AUDIOBOOKS_DIR:-./audiobooks}:/library/audiobooks:ro
+      # папки-заглушки из репозитория (empty/), контейнер всё равно запустится.
+      - ${BOOKS_DIR:-./empty/books}:/library/books:ro
+      - ${AUDIOBOOKS_DIR:-./empty/audiobooks}:/library/audiobooks:ro
       # Ещё папки — в docker-compose.override.yml (он не в git):
       # - /volume1/comics:/library/comics:ro
     networks:

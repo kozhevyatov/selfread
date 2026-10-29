@@ -23,7 +23,9 @@ import {
   WifiOff,
 } from "./icons";
 import { Brand, BookMark } from "./Logo";
+import { PlayerBar } from "./Player";
 import { Menu } from "./ui/menu";
+import { usePlayer } from "@/lib/player";
 
 const NAV = [
   { to: "/", label: "Главная", icon: House },
@@ -247,16 +249,18 @@ function OfflineBanner() {
 
 export function Layout({ children }: { children: ReactNode }) {
   const offline = useOffline();
+  const playing = Boolean(usePlayer().book);
   return (
     <div className="flex h-dvh overflow-hidden">
       <Sidebar />
       <div id="app-scroll" className="flex min-w-0 flex-1 flex-col overflow-y-auto overscroll-y-contain">
         <MobileHeader />
-        <main className="mx-auto w-full max-w-[1280px] flex-1 px-4 pt-5 pb-[96px] sm:px-6 lg:px-10 lg:pt-8 lg:pb-14">
+        <main className={cn("mx-auto w-full max-w-[1280px] flex-1 px-4 pt-5 sm:px-6 lg:px-10 lg:pt-8", playing ? "pb-[170px] lg:pb-32" : "pb-[96px] lg:pb-14")}>
           {offline && <OfflineBanner />}
           {children}
         </main>
       </div>
+      <PlayerBar />
       <TabBar />
     </div>
   );

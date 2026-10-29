@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import shutil
+import subprocess
+import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +16,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from ..access import allowed_library_ids
+from ..config import DATA_DIR
 from ..db import get_db
 from ..models import Book, Library, ReadState, Shelf, ShelfBook, User
 from ..scanner import cover_path
@@ -335,6 +340,60 @@ def book_audio(
         raise HTTPException(404, "Файл не найден")
     entry = files[index]
     return _file_response(db, book, entry["path"], entry.get("format", book.format), download)
+
+
+# ---------------- страницы DjVu картинками (для читалки) ----------------
+
+_render_lock = threading.BoundedSemaphore(2)  # слабому NAS — не больше двух ddjvu одновременно
+
+
+@router.get("/books/{book_id}/page/{page}")
+def book_page_image(
+    book_id: int,
+    page: int,
+    w: int = Query(1400, ge=200, le=3000),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_media_user),
+) -> FileResponse:
+    """Страница DjVu как WebP. Рендерим через ddjvu и кэшируем в data/pages."""
+    book = _get_book(db, user, book_id)
+    files = json.loads(book.files or "[]")
+    entry = next((f for f in files if f["format"] == "djvu"), None)
+    if not entry:
+        raise HTTPException(404, "У книги нет DjVu")
+    if page < 1 or (book.pages and page > book.pages):
+        raise HTTPException(404, "Нет такой страницы")
+    lib = db.get(Library, book.library_id)
+    src = (Path(lib.path) / entry["path"]).resolve() if lib else None
+    if not src or not src.is_file():
+        raise HTTPException(404, "Файл не найден")
+    cache_dir = DATA_DIR / "pages" / str(book.id)
+    target = cache_dir / f"{page}-{w}-{book.fingerprint[:8]}.webp"
+    if not target.is_file():
+        if not shutil.which("ddjvu"):
+            raise HTTPException(501, "На сервере нет ddjvu (djvulibre)")
+        with _render_lock:
+            if not target.is_file():
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                with tempfile.TemporaryDirectory(prefix="sr-djvu-") as tmp:
+                    out = Path(tmp) / "p.pnm"
+                    try:
+                        subprocess.run(
+                            ["ddjvu", "-format=pnm", f"-page={page}", f"-size={w}x{w * 2}", str(src), str(out)],
+                            capture_output=True,
+                            timeout=120,
+                        )
+                    except (OSError, subprocess.SubprocessError):
+                        raise HTTPException(500, "Не удалось отрисовать страницу")
+                    if not out.is_file():
+                        raise HTTPException(500, "Не удалось отрисовать страницу")
+                    from PIL import Image  # noqa: PLC0415
+
+                    with Image.open(out) as img:
+                        tmp_target = target.with_suffix(".tmp")
+                        img.convert("RGB").save(tmp_target, "WEBP", quality=82, method=4)
+                        tmp_target.replace(target)
+    return FileResponse(target, media_type="image/webp", headers={"Cache-Control": "private, max-age=31536000, immutable"})
 
 
 # ---------------- статус и прогресс ----------------

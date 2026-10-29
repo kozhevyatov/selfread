@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -14,6 +15,28 @@ from .limits import BodyLimitMiddleware
 from .routers import admin, auth, books, profile, setup, shelves
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+
+# модули читалки (foliate-js, pdf.js) — .mjs должен отдаваться как JavaScript
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/octet-stream", ".bcmap")
+
+# Политика безопасности страницы: книги (EPUB и др.) рендерятся в iframe с blob:-адресов,
+# и скрипты внутри книги не должны выполняться — разрешены только наши собственные файлы.
+CSP = "; ".join(
+    [
+        "default-src 'self'",
+        "script-src 'self' 'wasm-unsafe-eval'",
+        "worker-src 'self' blob:",
+        "style-src 'self' 'unsafe-inline' blob: https://fonts.googleapis.com",
+        "font-src 'self' data: blob: https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "media-src 'self' blob:",
+        "frame-src 'self' blob:",
+        "connect-src 'self' blob: data:",
+        "object-src 'none'",
+        "base-uri 'self'",
+    ]
+)
 
 
 @asynccontextmanager
@@ -62,6 +85,8 @@ def spa(path: str):
     candidate = (static_dir / path).resolve()
     if path and candidate.is_file() and static_dir.resolve() in candidate.parents:
         headers = {}
+        if candidate.suffix == ".html":
+            headers["Content-Security-Policy"] = CSP
         if candidate.name in ("sw.js", "manifest.json"):
             # Браузер должен быстро замечать новую версию service worker
             headers["Cache-Control"] = "no-cache"
@@ -71,5 +96,5 @@ def spa(path: str):
     index = static_dir / "index.html"
     if index.exists():
         # index.html не кэшируем — иначе после деплоя открывалась бы старая версия
-        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+        return FileResponse(index, headers={"Cache-Control": "no-cache", "Content-Security-Policy": CSP})
     raise HTTPException(404, "Фронтенд не собран")

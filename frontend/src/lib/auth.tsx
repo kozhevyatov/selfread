@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, onAuthChange, refreshSession, setSession, type User } from "./api";
 import { clearCache } from "./query";
+import { syncReaderPrefsFromUser } from "./readerPrefs";
 import { syncThemeFromUser } from "./theme";
 
 type AuthState = { user: User | null; ready: boolean; logout: () => Promise<void> };
@@ -15,6 +16,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const off = onAuthChange((u) => {
       setUser(u);
       syncThemeFromUser(u);
+      syncReaderPrefsFromUser(u);
     });
     refreshSession().finally(() => setReady(true));
     return off;
