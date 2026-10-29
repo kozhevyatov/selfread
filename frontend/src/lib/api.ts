@@ -465,7 +465,8 @@ export const api = {
   uploads: {
     targets: () => request<UploadTarget[]>("/api/uploads/targets"),
     personal: () => request<UploadTarget>("/api/uploads/personal", { method: "POST" }),
-    done: (library_id: number) => request<{ ok: true }>("/api/uploads/done", { method: "POST", body: json({ library_id }) }),
+    done: (library_id: number, shelf_id?: number | null, paths: string[] = []) =>
+      request<{ ok: true }>("/api/uploads/done", { method: "POST", body: json({ library_id, shelf_id: shelf_id ?? null, paths }) }),
     status: () => request<{ running: boolean; done: number; total: number }>("/api/uploads/status"),
   },
 

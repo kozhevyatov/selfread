@@ -6,8 +6,11 @@
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import re
+from datetime import datetime, timezone
 import shutil
 from pathlib import Path, PurePosixPath
 
@@ -19,12 +22,13 @@ from sqlalchemy.orm import Session
 from ..access import fs_writable
 from ..bookmeta import IMAGE_EXT, file_format
 from ..config import UPLOAD_ROOT
-from ..db import get_db
-from ..models import Library, LibraryAccess, User
+from ..db import get_db, session_scope
+from ..models import Book, Library, LibraryAccess, Shelf, ShelfBook, User
 from ..scanner import scanner
 from ..security import get_current_user
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
+log = logging.getLogger("selfread.uploads")
 
 MAX_FILE = 2048 * 1024 * 1024  # 2 ГБ на файл
 EXTRA_OK = {".opf"}  # metadata.opf из библиотеки Calibre
@@ -168,15 +172,49 @@ def upload(
 
 class DoneIn(BaseModel):
     library_id: int
+    shelf_id: int | None = None
+    paths: list[str] = []  # пути загруженных файлов (из ответа POST /api/uploads)
+
+
+def _shelve(library_id: int, shelf_id: int, paths: set[str]) -> None:
+    """После сканирования: книги, в которых есть загруженные файлы, — на полку."""
+    with session_scope() as db:
+        shelf = db.get(Shelf, shelf_id)
+        if not shelf:
+            return
+        have = set(db.scalars(select(ShelfBook.book_id).where(ShelfBook.shelf_id == shelf_id)))
+        added = 0
+        for book in db.scalars(select(Book).where(Book.library_id == library_id)):
+            if book.id in have:
+                continue
+            files = {f.get("path") for f in json.loads(book.files or "[]")}
+            if files & paths:
+                db.add(ShelfBook(shelf_id=shelf_id, book_id=book.id))
+                have.add(book.id)
+                added += 1
+        if added:
+            shelf.updated_at = datetime.now(timezone.utc)
+        db.commit()
+        log.info("На полку %s добавлено загруженных книг: %s", shelf_id, added)
 
 
 @router.post("/done")
 def done(data: DoneIn, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    """Пачка загружена — найти новые книги в медиатеке."""
+    """Пачка загружена — найти новые книги в медиатеке (и, если выбрана, положить их на полку)."""
     lib = db.get(Library, data.library_id)
     if not lib or not _can_write(db, user, lib):
         raise HTTPException(403, "Нет права загружать в эту медиатеку")
+    shelf_id = None
+    if data.shelf_id:
+        shelf = db.get(Shelf, data.shelf_id)
+        if not shelf or shelf.owner_id != user.id:
+            raise HTTPException(404, "Полка не найдена")
+        shelf_id = shelf.id
     scanner.start(library_id=lib.id)
+    if shelf_id and data.paths:
+        paths = {_safe_rel(p).as_posix() for p in data.paths}
+        lib_id = lib.id
+        scanner.when_idle(lambda: _shelve(lib_id, shelf_id, paths))
     return {"ok": True}
 
 

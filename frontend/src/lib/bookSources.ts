@@ -154,31 +154,62 @@ function makeHtmlBook(html: string, title: string): FoliateBook {
 function makeDjvuBook(book: BookDetail): FoliateBook {
   const count = Math.max(1, book.pages ?? 1);
   const width = Math.min(2400, Math.round(Math.max(window.innerWidth, window.innerHeight) * Math.min(2, window.devicePixelRatio || 1)));
-  const urls = new Map<number, string>();
+  // по две ссылки на страницу: картинка и HTML-обёртка (blob: — относительные пути внутри не работают)
+  const urls = new Map<number, string[]>();
+  const free = (i: number) => {
+    urls.get(i)?.forEach((u) => URL.revokeObjectURL(u));
+    urls.delete(i);
+  };
+  const loadPage = async (i: number) => {
+    const cached = urls.get(i);
+    if (cached) return cached[1];
+    const res = await fetch(`${window.location.origin}/api/books/${book.id}/page/${i + 1}?w=${width}`, { credentials: "same-origin" });
+    if (!res.ok) {
+      let msg = `Страница ${i + 1}: ошибка ${res.status}`;
+      try {
+        msg = (await res.json()).detail || msg;
+      } catch {
+        /* не JSON */
+      }
+      const html = htmlPage(`<p style="font:16px sans-serif;padding:40px;text-align:center">${escapeHtml(msg)}</p>`);
+      const u = URL.createObjectURL(new Blob([html.replace("<head>", '<head><meta name="viewport" content="width=600, height=800">')], { type: "text/html" }));
+      urls.set(i, [u, u]);
+      return u;
+    }
+    const img = await res.blob();
+    // размер страницы — для раскладки фиксированного макета
+    let w = 1000;
+    let h = 1400;
+    try {
+      const bmp = await createImageBitmap(img);
+      w = bmp.width;
+      h = bmp.height;
+      bmp.close();
+    } catch {
+      /* оставим примерный размер */
+    }
+    const imgUrl = URL.createObjectURL(img);
+    const html = htmlPage(`<img src="${imgUrl}" alt="" style="display:block;width:100%;height:100%">`)
+      .replace("<head>", `<head><meta name="viewport" content="width=${w}, height=${h}">`)
+      .replace("<body>", '<body style="margin:0">');
+    const pageUrl = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    urls.set(i, [imgUrl, pageUrl]);
+    return pageUrl;
+  };
   return {
     metadata: { title: book.title },
     rendition: { layout: "pre-paginated" },
     sections: Array.from({ length: count }, (_, i) => ({
       id: i,
-      size: 1,
-      load: () => {
-        if (!urls.has(i)) {
-          const src = `/api/books/${book.id}/page/${i + 1}?w=${width}`;
-          urls.set(i, URL.createObjectURL(new Blob([htmlPage(`<img src="${src}" style="display:block">`).replace("<body>", '<body style="margin:0">')], { type: "text/html" })));
-        }
-        return urls.get(i)!;
-      },
-      unload: () => {
-        const u = urls.get(i);
-        if (u) URL.revokeObjectURL(u);
-        urls.delete(i);
-      },
+      size: 1500,
+      load: () => loadPage(i),
+      unload: () => free(i),
     })),
     toc: [],
     resolveHref: (href) => ({ index: Number(href) || 0 }),
     splitTOCHref: (href) => [Number(href), null],
     getTOCFragment: (doc) => doc.documentElement,
-    destroy: () => urls.forEach((u) => URL.revokeObjectURL(u)),
+    destroy: () => [...urls.keys()].forEach(free),
   };
 }
 

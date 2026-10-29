@@ -338,6 +338,7 @@ class Scanner:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._queue: list[tuple[int | None, bool]] = []
+        self._after: list = []  # что сделать, когда очередь сканирования опустеет
         self._status: dict = {"running": False, "library": None, "done": 0, "total": 0, "current": "", "started_at": None, "finished_at": None, "added": 0, "updated": 0, "removed": 0}
 
     def status(self) -> dict:
@@ -355,6 +356,21 @@ class Scanner:
             self._thread.start()
             return True
 
+    def when_idle(self, fn) -> None:  # noqa: ANN001
+        """Вызвать fn() после окончания текущих сканирований (например, разложить загруженное по полкам)."""
+        with self._lock:
+            if self._thread is not None and self._thread.is_alive():
+                self._after.append(fn)
+                return
+        self._call(fn)
+
+    @staticmethod
+    def _call(fn) -> None:  # noqa: ANN001
+        try:
+            fn()
+        except Exception:  # noqa: BLE001
+            log.exception("Ошибка задачи после сканирования")
+
     def _set(self, **kw) -> None:  # noqa: ANN003
         with self._lock:
             self._status.update(kw)
@@ -362,10 +378,20 @@ class Scanner:
     def _run(self) -> None:
         while True:
             with self._lock:
+                after: list = []
                 if not self._queue:
-                    self._status.update(running=False, current="", finished_at=datetime.now(timezone.utc).isoformat())
-                    self._thread = None
-                    return
+                    after, self._after = self._after, []
+                    if not after:
+                        self._status.update(running=False, current="", finished_at=datetime.now(timezone.utc).isoformat())
+                        self._thread = None
+                        return
+            if after:
+                for fn in after:
+                    self._call(fn)
+                continue
+            with self._lock:
+                if not self._queue:
+                    continue
                 library_id, full = self._queue.pop(0)
                 self._status.update(running=True, started_at=datetime.now(timezone.utc).isoformat(), added=0, updated=0, removed=0)
             try:

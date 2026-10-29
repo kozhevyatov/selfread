@@ -44,6 +44,10 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
   const targets = useQuery(["upload-targets"], api.uploads.targets);
   const [target, setTarget] = useState<number | null>(libraryId ?? null);
   const [folder, setFolder] = useState("");
+  const shelves = useQuery(["shelves"], api.shelves.list);
+  // "" — без полки, "new" — новая полка, иначе id полки
+  const [shelf, setShelf] = useState("");
+  const [shelfName, setShelfName] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [busy, setBusy] = useState(false);
   const [over, setOver] = useState(false);
@@ -95,6 +99,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
     const ctrl = new AbortController();
     abort.current = ctrl;
     const base = folder.trim().replace(/^\/+|\/+$/g, "");
+    const saved: string[] = [];
     let ok = 0;
     for (let i = 0; i < items.length; i++) {
       if (ctrl.signal.aborted) break;
@@ -102,8 +107,9 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
       if (it.status === "done") continue;
       setItems((cur) => cur.map((x, k) => (k === i ? { ...x, status: "upload", loaded: 0, error: undefined } : x)));
       try {
-        await uploadFile(lib, base ? `${base}/${it.rel}` : it.rel, it.file, (loaded) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, loaded } : x))), ctrl.signal);
+        const res = await uploadFile(lib, base ? `${base}/${it.rel}` : it.rel, it.file, (loaded) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, loaded } : x))), ctrl.signal);
         ok++;
+        saved.push(res.path);
         setItems((cur) => cur.map((x, k) => (k === i ? { ...x, status: "done", loaded: x.file.size } : x)));
       } catch (err) {
         setItems((cur) => cur.map((x, k) => (k === i ? { ...x, status: "error", error: (err as Error).message } : x)));
@@ -112,12 +118,28 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
     setBusy(false);
     abort.current = null;
     if (ok) {
+      let shelfId: number | null = shelf && shelf !== "new" ? Number(shelf) : null;
+      let shelfLabel = shelves.data?.find((s) => s.id === shelfId)?.name ?? "";
+      if (shelf === "new" && shelfName.trim()) {
+        try {
+          const created = await api.shelves.create({ name: shelfName.trim() });
+          shelfId = created.id;
+          shelfLabel = created.name;
+          setShelf(String(created.id));
+          setShelfName("");
+          invalidate(["shelves"], ["home"]);
+        } catch (err) {
+          toast.error((err as Error).message);
+        }
+      }
       try {
-        await api.uploads.done(lib);
+        await api.uploads.done(lib, shelfId, saved);
       } catch {
         /* просканируется по расписанию */
       }
-      toast.success(`Загружено ${ok} ${plural(ok, "файл", "файла", "файлов")}. Книги появятся в библиотеке через минуту.`);
+      toast.success(
+        `Загружено ${ok} ${plural(ok, "файл", "файла", "файлов")}. Книги появятся в библиотеке через минуту${shelfId ? ` — сразу на полке «${shelfLabel}»` : ""}.`,
+      );
       waitForScan();
     }
   };
@@ -142,7 +164,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
           <Button variant="ghost" onClick={() => (busy ? abort.current?.abort() : dialogs.closeQuiet())}>
             {busy ? "Остановить" : "Закрыть"}
           </Button>
-          <Button onClick={start} disabled={busy || !pending || target === null}>
+          <Button onClick={start} disabled={busy || !pending || target === null || (shelf === "new" && !shelfName.trim())}>
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : <CloudUpload className="size-4" />}
             {busy ? `Загружаю · ${total ? Math.round((loaded / total) * 100) : 0}%` : pending ? `Загрузить ${pending} ${plural(pending, "файл", "файла", "файлов")}` : "Загрузить"}
           </Button>
@@ -174,6 +196,27 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
             <Field id="up-folder" label="Подпапка (необязательно)" hint="Например, «Толстой» или название аудиокниги">
               <Input id="up-folder" value={folder} onChange={(e) => setFolder(e.target.value)} disabled={busy} placeholder="В корень медиатеки" />
             </Field>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field id="up-shelf" label="На полку (необязательно)">
+              <Select id="up-shelf" value={shelf} onChange={(e) => setShelf(e.target.value)} disabled={busy}>
+                <option value="">Не добавлять на полку</option>
+                {(shelves.data ?? [])
+                  .filter((s) => s.mine)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                <option value="new">+ Новая полка…</option>
+              </Select>
+            </Field>
+            {shelf === "new" && (
+              <Field id="up-shelf-name" label="Название полки">
+                <Input id="up-shelf-name" value={shelfName} onChange={(e) => setShelfName(e.target.value)} disabled={busy} placeholder="Например, «Фантастика»" />
+              </Field>
+            )}
           </div>
 
           <div
@@ -278,7 +321,7 @@ function waitForScan() {
     try {
       const s = await api.uploads.status();
       if (!s.running || tries > 120) {
-        invalidate(["home"], ["books"], ["facets"], ["libraries"], ["admin", "libraries"]);
+        invalidate(["home"], ["books"], ["facets"], ["libraries"], ["admin", "libraries"], ["shelves"], ["shelf"]);
         return;
       }
     } catch {

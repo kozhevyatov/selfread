@@ -344,6 +344,8 @@ export default function ReaderPage() {
   const book = detail.data;
   const fmt = book ? (params.get("fmt") && book.formats.includes(params.get("fmt")!) ? params.get("fmt")! : pickFormat(book)) : null;
   const fixed = fmt ? FIXED.has(fmt) : false;
+  const fixedRef = useRef(fixed);
+  fixedRef.current = fixed;
   const theme = pageTheme(prefs.theme);
 
   // ---- сохранение позиции ----
@@ -406,8 +408,9 @@ export default function ReaderPage() {
             fraction: Number.isFinite(d.fraction) ? d.fraction : 0,
             chapter: d.tocItem?.label ?? "",
             cfi: d.cfi ?? "",
-            current: d.location?.current,
-            total: d.location?.total,
+            // PDF, DjVu, CBZ — номер страницы = номер секции
+            current: fixedRef.current && d.section ? d.section.current : d.location?.current,
+            total: fixedRef.current && d.section ? d.section.total : d.location?.total,
           };
           setLoc(l);
           scheduleSave(l);
