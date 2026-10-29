@@ -77,8 +77,21 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
   };
 
   const start = async () => {
-    if (!target) return;
+    if (target === null) return;
     setBusy(true);
+    let lib = target;
+    if (lib === 0) {
+      // личной медиатеки ещё нет — создаём её перед первой загрузкой
+      try {
+        lib = (await api.uploads.personal()).id;
+        setTarget(lib);
+        invalidate(["upload-targets"], ["libraries"], ["admin", "libraries"]);
+      } catch (err) {
+        toast.error((err as Error).message);
+        setBusy(false);
+        return;
+      }
+    }
     const ctrl = new AbortController();
     abort.current = ctrl;
     const base = folder.trim().replace(/^\/+|\/+$/g, "");
@@ -89,7 +102,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
       if (it.status === "done") continue;
       setItems((cur) => cur.map((x, k) => (k === i ? { ...x, status: "upload", loaded: 0, error: undefined } : x)));
       try {
-        await uploadFile(target, base ? `${base}/${it.rel}` : it.rel, it.file, (loaded) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, loaded } : x))), ctrl.signal);
+        await uploadFile(lib, base ? `${base}/${it.rel}` : it.rel, it.file, (loaded) => setItems((cur) => cur.map((x, k) => (k === i ? { ...x, loaded } : x))), ctrl.signal);
         ok++;
         setItems((cur) => cur.map((x, k) => (k === i ? { ...x, status: "done", loaded: x.file.size } : x)));
       } catch (err) {
@@ -100,7 +113,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
     abort.current = null;
     if (ok) {
       try {
-        await api.uploads.done(target);
+        await api.uploads.done(lib);
       } catch {
         /* просканируется по расписанию */
       }
@@ -129,7 +142,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
           <Button variant="ghost" onClick={() => (busy ? abort.current?.abort() : dialogs.closeQuiet())}>
             {busy ? "Остановить" : "Закрыть"}
           </Button>
-          <Button onClick={start} disabled={busy || !pending || !target}>
+          <Button onClick={start} disabled={busy || !pending || target === null}>
             {busy ? <LoaderCircle className="size-4 animate-spin" /> : <CloudUpload className="size-4" />}
             {busy ? `Загружаю · ${total ? Math.round((loaded / total) * 100) : 0}%` : pending ? `Загрузить ${pending} ${plural(pending, "файл", "файла", "файлов")}` : "Загрузить"}
           </Button>
@@ -153,7 +166,7 @@ export function UploadDialog({ libraryId }: { libraryId?: number }) {
               <Select id="up-lib" value={target ?? ""} onChange={(e) => setTarget(Number(e.target.value))} disabled={busy}>
                 {list.map((t: UploadTarget) => (
                   <option key={t.id} value={t.id}>
-                    {t.name} · {t.scope === "personal" ? "личная" : "общая"}
+                    {t.name} · {t.new ? "личная, создастся" : t.scope === "personal" ? "личная" : "общая"}
                   </option>
                 ))}
               </Select>

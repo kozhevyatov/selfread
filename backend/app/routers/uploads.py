@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..access import fs_writable
 from ..bookmeta import IMAGE_EXT, file_format
+from ..config import UPLOAD_ROOT
 from ..db import get_db
 from ..models import Library, LibraryAccess, User
 from ..scanner import scanner
@@ -45,10 +46,45 @@ def _targets(db: Session, user: User) -> list[Library]:
     return [lib for lib in libs if _can_write(db, user, lib) and fs_writable(lib.path)]
 
 
+PERSONAL_NAME = "Мои книги"
+
+
+def _media_writable() -> bool:
+    try:
+        UPLOAD_ROOT.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return fs_writable(str(UPLOAD_ROOT))
+
+
+def _has_personal(db: Session, user: User) -> bool:
+    return db.scalar(select(Library.id).where(Library.owner_id == user.id).limit(1)) is not None
+
+
 @router.get("/targets")
 def targets(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> list[dict]:
-    """Медиатеки, куда пользователь может загружать книги."""
-    return [{"id": lib.id, "name": lib.name, "scope": "personal" if lib.owner_id else "shared"} for lib in _targets(db, user)]
+    """Медиатеки, куда пользователь может загружать книги.
+
+    Если личной медиатеки ещё нет — предлагаем её (id 0): она создастся при первой загрузке.
+    """
+    out = [{"id": lib.id, "name": lib.name, "scope": "personal" if lib.owner_id else "shared"} for lib in _targets(db, user)]
+    if not _has_personal(db, user) and _media_writable():
+        out.insert(0, {"id": 0, "name": PERSONAL_NAME, "scope": "personal", "new": True})
+    return out
+
+
+@router.post("/personal")
+def create_personal(db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Создать личную медиатеку media/<логин>/books (или вернуть уже существующую)."""
+    from .admin import _personal_dir
+
+    lib = db.scalars(select(Library).where(Library.owner_id == user.id).order_by(Library.id)).first()
+    if lib is None:
+        lib = Library(name=PERSONAL_NAME, path=_personal_dir(db, user), owner_id=user.id, default_access=False)
+        db.add(lib)
+        db.commit()
+        db.refresh(lib)
+    return {"id": lib.id, "name": lib.name, "scope": "personal"}
 
 
 _BAD = re.compile(r'[\x00-\x1f<>:"\\|?*]+')

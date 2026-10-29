@@ -187,7 +187,7 @@ export type FsListing = {
   book_files: number;
 };
 
-export type UploadTarget = { id: number; name: string; scope: "personal" | "shared" };
+export type UploadTarget = { id: number; name: string; scope: "personal" | "shared"; new?: boolean };
 
 export type BookQuery = {
   q?: string;
@@ -464,6 +464,7 @@ export const api = {
 
   uploads: {
     targets: () => request<UploadTarget[]>("/api/uploads/targets"),
+    personal: () => request<UploadTarget>("/api/uploads/personal", { method: "POST" }),
     done: (library_id: number) => request<{ ok: true }>("/api/uploads/done", { method: "POST", body: json({ library_id }) }),
     status: () => request<{ running: boolean; done: number; total: number }>("/api/uploads/status"),
   },
