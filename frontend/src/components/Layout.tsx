@@ -8,6 +8,7 @@ import { cn, hueOf } from "@/lib/utils";
 import {
   Book,
   ChevronRight,
+  CloudUpload,
   Headphones,
   House,
   LibraryBig,
@@ -26,6 +27,7 @@ import { Brand, BookMark } from "./Logo";
 import { PlayerBar } from "./Player";
 import { Menu } from "./ui/menu";
 import { usePlayer } from "@/lib/player";
+import { dialogs } from "@/lib/dialogs";
 
 const NAV = [
   { to: "/", label: "Главная", icon: House },
@@ -125,6 +127,8 @@ function Sidebar() {
   const settings = useQuery(["settings"], api.settings.get, { staleTime: 5 * 60_000 });
   const libraries = useQuery(["libraries"], api.libraries);
   const shelves = useQuery(["shelves"], api.shelves.list);
+  const targets = useQuery(["upload-targets"], api.uploads.targets, { staleTime: 5 * 60_000 });
+  const canUpload = Boolean(targets.data?.length);
   const libs = libraries.data ?? [];
   const own = (shelves.data ?? []).slice(0, 8);
 
@@ -156,6 +160,16 @@ function Sidebar() {
           </Link>
         ))}
         {libraries.data && libs.length === 0 && <p className="px-3 text-sm text-faint">Пока нет медиатек</p>}
+        {canUpload && (
+          <button
+            type="button"
+            onClick={() => dialogs.upload()}
+            className="mt-1 flex min-h-11 items-center gap-2.5 rounded-[10px] px-3 text-left text-muted transition hover:bg-surface-2 hover:text-fg"
+          >
+            <CloudUpload className="size-[18px]" />
+            Загрузить книги
+          </button>
+        )}
         {user?.is_admin && (
           <Link
             to="/admin?tab=libraries&new=1"

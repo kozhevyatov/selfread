@@ -187,6 +187,8 @@ export type FsListing = {
   book_files: number;
 };
 
+export type UploadTarget = { id: number; name: string; scope: "personal" | "shared" };
+
 export type BookQuery = {
   q?: string;
   kind?: BookKind | "";
@@ -355,6 +357,51 @@ function setupHeaders(token?: string): HeadersInit {
 }
 
 
+/** Загрузка файла с прогрессом (fetch не умеет прогресс отправки). */
+export function uploadFile(
+  libraryId: number,
+  path: string,
+  file: File,
+  onProgress: (loaded: number, total: number) => void,
+  signal?: AbortSignal,
+): Promise<{ path: string; size: number }> {
+  const send = () =>
+    new Promise<{ status: number; body: unknown }>((resolve, reject) => {
+      const form = new FormData();
+      form.append("library_id", String(libraryId));
+      form.append("path", path);
+      form.append("file", file, file.name);
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/uploads");
+      xhr.withCredentials = true;
+      if (accessToken) xhr.setRequestHeader("Authorization", `Bearer ${accessToken}`);
+      xhr.upload.onprogress = (e) => onProgress(e.loaded, e.total);
+      xhr.onload = () => {
+        let body: unknown = null;
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          body = null;
+        }
+        resolve({ status: xhr.status, body });
+      };
+      xhr.onerror = () => reject(new ApiError(0, "Нет связи с сервером"));
+      xhr.onabort = () => reject(new ApiError(0, "Отменено"));
+      signal?.addEventListener("abort", () => xhr.abort());
+      xhr.send(form);
+    });
+  return send().then(async ({ status, body }) => {
+    if (status === 401 && (await refreshSession())) {
+      const retry = await send();
+      status = retry.status;
+      body = retry.body;
+    }
+    if (status === 413 && !body) throw new ApiError(413, "Файл слишком большой для прокси-сервера");
+    if (status < 200 || status >= 300) throw new ApiError(status, errorMessage(body, `Ошибка ${status}`));
+    return body as { path: string; size: number };
+  });
+}
+
 /** Обложка нужного размера (сервер отдаёт одну, размер — подсказка для будущего кэша) */
 export const coverUrl = (url: string | null | undefined) => url ?? null;
 export const fileUrl = (id: number, fmt?: string, download = false) => `/api/books/${id}/file${qs({ fmt, download: download || undefined })}`;
@@ -413,6 +460,12 @@ export const api = {
     get: (id: number) => request<BookDetail>(`/api/books/${id}`),
     setState: (id: number, data: Partial<Pick<ReadState, "status" | "progress" | "position" | "chapter" | "rating">>) =>
       request<ReadState>(`/api/books/${id}/state`, { method: "PUT", body: json(data) }),
+  },
+
+  uploads: {
+    targets: () => request<UploadTarget[]>("/api/uploads/targets"),
+    done: (library_id: number) => request<{ ok: true }>("/api/uploads/done", { method: "POST", body: json({ library_id }) }),
+    status: () => request<{ running: boolean; done: number; total: number }>("/api/uploads/status"),
   },
 
   shelves: {

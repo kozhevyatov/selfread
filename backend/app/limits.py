@@ -17,6 +17,7 @@ MB = 1024 * 1024
 DEFAULT_LIMIT = 2 * MB
 # (шаблон пути, лимит, нужен ли access-токен в заголовке)
 RULES: list[tuple[re.Pattern[str], int, bool]] = [
+    (re.compile(r"^/api/uploads/?$"), 2048 * MB + 16 * MB, True),
     (re.compile(r"^/api/me/avatar/?$"), 16 * MB, True),
     (re.compile(r"^/api/admin/users/\d+/avatar/?$"), 16 * MB, True),
 ]

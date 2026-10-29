@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react";
 import { BookGrid, ReadingCard, ShelfCard } from "@/components/books";
-import { Book as BookIcon, FolderPlus, Plus, Search } from "@/components/icons";
+import { Book as BookIcon, CloudUpload, FolderPlus, Plus, Search } from "@/components/icons";
+import { Button } from "@/components/ui/button";
+import { dialogs } from "@/lib/dialogs";
 import { Section } from "@/components/Section";
 import { buttonClass } from "@/components/ui/button";
 import { Empty, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -37,6 +39,8 @@ export function SearchBox({ initial = "", autoFocus = false, className = "" }: {
 export default function HomePage() {
   const { user } = useAuth();
   const home = useQuery(["home"], api.home);
+  const targets = useQuery(["upload-targets"], api.uploads.targets, { staleTime: 5 * 60_000 });
+  const canUpload = Boolean(targets.data?.length);
 
   if (home.isLoading) return <PageLoader />;
   if (home.error) return <ErrorBox error={home.error} />;
@@ -53,7 +57,14 @@ export default function HomePage() {
             {data.reading.length ? "Продолжим чтение?" : `${greeting()}${user?.display_name ? `, ${user.display_name}` : ""}`}
           </h1>
         </div>
-        <SearchBox className="hidden sm:block" />
+        <div className="flex flex-wrap items-center gap-3">
+          <SearchBox className="hidden sm:block" />
+          {canUpload && (
+            <Button onClick={() => dialogs.upload()}>
+              <CloudUpload className="size-4" /> Загрузить
+            </Button>
+          )}
+        </div>
       </header>
 
       {empty ? (
@@ -67,10 +78,16 @@ export default function HomePage() {
                 : "Администратор ещё не открыл вам ни одной медиатеки с книгами."
             }
             action={
-              user?.is_admin && (
+              canUpload ? (
+                <Button onClick={() => dialogs.upload()}>
+                  <CloudUpload className="size-4" /> Загрузить книги
+                </Button>
+              ) : (
+                user?.is_admin && (
                 <Link to="/admin?tab=libraries&new=1" className={buttonClass("primary")}>
                   <FolderPlus className="size-4" /> Добавить медиатеку
                 </Link>
+                )
               )
             }
           />

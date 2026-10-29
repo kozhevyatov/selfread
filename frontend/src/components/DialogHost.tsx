@@ -10,6 +10,7 @@ import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/misc";
+import { UploadDialog } from "./UploadDialog";
 
 /** «На полку»: отметить полки для книги (или нескольких) и создать новую. */
 function ShelfPicker({ bookIds }: { bookIds: number[] }) {
@@ -120,6 +121,8 @@ export function DialogHost() {
       return <ShelfPicker bookIds={state.bookIds} />;
     case "confirm":
       return <Confirm {...state} />;
+    case "upload":
+      return <UploadDialog libraryId={state.libraryId} />;
     default:
       return null;
   }

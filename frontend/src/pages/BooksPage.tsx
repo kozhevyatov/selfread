@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BookGrid } from "@/components/books";
-import { Book as BookIcon, Headphones, Search, X } from "@/components/icons";
+import { Book as BookIcon, CloudUpload, Headphones, Search, X } from "@/components/icons";
+import { dialogs } from "@/lib/dialogs";
 import { PageHeader } from "@/components/Section";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
@@ -54,6 +55,7 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "audio" | "
   useEffect(() => setQuery(q), [q]);
 
   const libraries = useQuery(["libraries"], api.libraries);
+  const targets = useQuery(["upload-targets"], api.uploads.targets, { staleTime: 5 * 60_000 });
   const facets = useQuery(["facets"], api.books.facets);
   const list = useQuery(["books", filterKey, limit], () =>
     api.books.list({ q, status, format, author, series, sort, kind, library: libraryId, limit }),
@@ -80,6 +82,13 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "audio" | "
     <div className="flex flex-col gap-6">
       <PageHeader
         title={title}
+        actions={
+          targets.data?.length ? (
+            <Button onClick={() => dialogs.upload(mode === "library" && targets.data?.some((t) => t.id === libraryId) ? libraryId : undefined)}>
+              <CloudUpload className="size-4" /> Загрузить
+            </Button>
+          ) : undefined
+        }
         subtitle={
           data ? (
             <>

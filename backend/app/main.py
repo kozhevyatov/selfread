@@ -12,7 +12,7 @@ from . import db
 from . import scanner as _scanner  # noqa: F401 — регистрирует запуск сканера после подключения БД
 from .config import VERSION, settings
 from .limits import BodyLimitMiddleware
-from .routers import admin, auth, books, profile, setup, shelves
+from .routers import admin, auth, books, profile, setup, shelves, uploads
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
@@ -65,6 +65,7 @@ app.include_router(profile.router)
 app.include_router(profile.avatar_router)
 app.include_router(books.router)
 app.include_router(shelves.router)
+app.include_router(uploads.router)
 
 
 @app.get("/api/health", tags=["system"])
