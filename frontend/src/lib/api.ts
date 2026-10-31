@@ -103,6 +103,7 @@ export type BookDetail = Book & {
   chapters: { title: string; start: number }[];
   library: { id: number; name: string; scope: "personal" | "shared" } | null;
   scan_error: string | null;
+  can_delete?: boolean;
   shelves: { id: number; name: string }[];
   series_books: Book[];
 };
@@ -458,6 +459,7 @@ export const api = {
     list: (p: BookQuery = {}) => request<BookList>(`/api/books${qs(p)}`),
     facets: () => request<Facets>("/api/books/facets"),
     get: (id: number) => request<BookDetail>(`/api/books/${id}`),
+    remove: (id: number) => request<{ ok: true }>(`/api/books/${id}`, { method: "DELETE" }),
     setState: (id: number, data: Partial<Pick<ReadState, "status" | "progress" | "position" | "chapter" | "rating">>) =>
       request<ReadState>(`/api/books/${id}/state`, { method: "PUT", body: json(data) }),
   },

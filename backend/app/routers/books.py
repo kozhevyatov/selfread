@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import shutil
 import subprocess
@@ -15,11 +16,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
-from ..access import allowed_library_ids
+from ..access import allowed_library_ids, can_write, fs_writable
 from ..config import DATA_DIR
 from ..db import get_db
 from ..models import Book, Library, ReadState, Shelf, ShelfBook, User
-from ..scanner import cover_path
+from ..bookmeta import IMAGE_EXT
+from ..scanner import cover_path, scanner
 from ..schemas import StateUpdate
 from ..security import get_current_user, get_media_user
 
@@ -243,6 +245,7 @@ def get_book(book_id: int, db: Session = Depends(get_db), user: User = Depends(g
             "chapters": json.loads(book.chapters or "[]"),
             "library": {"id": lib.id, "name": lib.name, "scope": "personal" if lib.owner_id else "shared"} if lib else None,
             "scan_error": book.scan_error,
+            "can_delete": bool(lib and can_write(db, user, lib) and fs_writable(lib.path)),
             "shelves": [
                 {"id": s.id, "name": s.name}
                 for s in db.scalars(
@@ -478,3 +481,66 @@ def home(db: Session = Depends(get_db), user: User = Depends(get_current_user)) 
         "counts": {"total": total, **{k: int(v) for k, v in counts.items()}},
         "status_labels": STATUS_LABELS,
     }
+
+
+# ---------------- удаление ----------------
+
+log = logging.getLogger("uvicorn.error")
+# что можно убрать вместе с книгой, если в папке больше ничего нет
+_LEFTOVER_EXT = IMAGE_EXT | {".opf", ".nfo", ".cue", ".m3u", ".m3u8", ".db", ".ini"}
+_LEFTOVER_NAMES = {".ds_store", "thumbs.db", "desktop.ini"}
+
+
+def _cleanup_dir(folder: Path, root: Path) -> None:
+    """Удалить папку книги, если в ней остались только обложки, metadata.opf и служебный мусор."""
+    while folder != root and root in folder.parents and folder.is_dir():
+        rest = list(folder.iterdir())
+        if any(p.is_dir() or (p.suffix.lower() not in _LEFTOVER_EXT and p.name.lower() not in _LEFTOVER_NAMES) for p in rest):
+            return
+        for p in rest:
+            p.unlink(missing_ok=True)
+        folder.rmdir()
+        folder = folder.parent
+
+
+@router.delete("/books/{book_id}")
+def delete_book(book_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Удалить книгу: файлы с диска и запись из библиотеки (с прогрессом и полками у всех)."""
+    book = _get_book(db, user, book_id)
+    lib = db.get(Library, book.library_id)
+    if not lib or not can_write(db, user, lib):
+        raise HTTPException(403, "Нет права удалять книги из этой медиатеки")
+    if not fs_writable(lib.path):
+        raise HTTPException(400, "Папка медиатеки доступна только для чтения — удалите файл на сервере")
+    root = Path(lib.path).resolve()
+    files = json.loads(book.files or "[]")
+    folders: set[Path] = set()
+    for f in files:
+        target = (root / f["path"]).resolve()
+        if root not in target.parents:
+            continue
+        try:
+            target.unlink(missing_ok=True)
+        except OSError as exc:
+            raise HTTPException(500, f"Не удалось удалить {Path(f['path']).name}: {exc.strerror}")
+        folders.add(target.parent)
+    if book.kind == "audio" and book.path:
+        folders.add((root / book.path).resolve())
+    for folder in sorted(folders, key=lambda p: len(p.parts), reverse=True):
+        try:
+            _cleanup_dir(folder, root)
+        except OSError as exc:
+            log.warning("Не удалось убрать папку %s: %s", folder, exc)
+    cover_path(book.id).unlink(missing_ok=True)
+    shutil.rmtree(DATA_DIR / "pages" / str(book.id), ignore_errors=True)
+    for model in (ReadState, ShelfBook):
+        for row in db.scalars(select(model).where(model.book_id == book.id)):
+            db.delete(row)
+    title = book.title
+    db.delete(book)
+    db.flush()
+    scanner._update_counts(db, lib)  # noqa: SLF001
+    db.commit()
+    log.info("Книга «%s» удалена пользователем %s", title, user.username)
+    return {"ok": True}
+

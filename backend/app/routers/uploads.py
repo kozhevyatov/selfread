@@ -19,11 +19,11 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..access import fs_writable
+from ..access import can_write as _can_write, fs_writable
 from ..bookmeta import IMAGE_EXT, file_format
 from ..config import UPLOAD_ROOT
 from ..db import get_db, session_scope
-from ..models import Book, Library, LibraryAccess, Shelf, ShelfBook, User
+from ..models import Book, Library, Shelf, ShelfBook, User
 from ..scanner import scanner
 from ..security import get_current_user
 
@@ -32,17 +32,6 @@ log = logging.getLogger("selfread.uploads")
 
 MAX_FILE = 2048 * 1024 * 1024  # 2 ГБ на файл
 EXTRA_OK = {".opf"}  # metadata.opf из библиотеки Calibre
-
-
-def _can_write(db: Session, user: User, lib: Library) -> bool:
-    if not lib.enabled:
-        return False
-    if lib.owner_id is not None:
-        return lib.owner_id == user.id
-    if user.is_admin:
-        return True
-    row = db.get(LibraryAccess, (user.id, lib.id))
-    return bool(row and row.can_write)
 
 
 def _targets(db: Session, user: User) -> list[Library]:

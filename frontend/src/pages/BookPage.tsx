@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { BookCover, BookGrid, Rating, saveState, SeriesLine, STATUSES, statusLabel } from "@/components/books";
-import { ArrowLeft, BookOpen, Download, Headphones, LibraryBig, Lock, Play, Users } from "@/components/icons";
+import { ArrowLeft, BookOpen, Download, Headphones, LibraryBig, LoaderCircle, Lock, Play, Trash, Users } from "@/components/icons";
 import { Section } from "@/components/Section";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Badge, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -9,7 +9,8 @@ import { canRead } from "@/lib/bookSources";
 import { dialogs } from "@/lib/dialogs";
 import { chaptersOf, currentChapter, player, usePlayer } from "@/lib/player";
 import { formatDuration, formatSize, formatTime, pagesLabel, percent } from "@/lib/format";
-import { setQueryData, useQuery } from "@/lib/query";
+import { invalidate, setQueryData, useQuery } from "@/lib/query";
+import { toast } from "@/lib/toast";
 import { Link, navigate, useParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 
@@ -104,6 +105,7 @@ export default function BookPage() {
   const { id } = useParams<{ id: string }>();
   const bookId = Number(id);
   const query = useQuery(["book", bookId], () => api.books.get(bookId));
+  const [deleting, setDeleting] = useState(false);
 
   if (query.isLoading) return <PageLoader />;
   if (query.error) return <ErrorBox error={query.error} />;
@@ -114,6 +116,29 @@ export default function BookPage() {
     : book.pages
       ? pagesLabel(book.pages)
       : null;
+
+  const remove = async () => {
+    const shared = book.library?.scope === "shared";
+    const ok = await dialogs.confirm({
+      title: "Удалить книгу?",
+      text: `«${book.title}» удалится вместе с ${audio ? "файлами аудиокниги" : "файлом"} на сервере${shared ? " — у всех, у кого есть доступ к общей медиатеке, вместе с их прогрессом" : ""}. Вернуть не получится.`,
+      action: "Удалить",
+      danger: true,
+    });
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await api.books.remove(book.id);
+      if (player.bookId() === book.id) player.close();
+      invalidate(["home"], ["books"], ["facets"], ["libraries"], ["shelves"], ["shelf"], ["admin", "libraries"]);
+      toast.success(`Книга «${book.title}» удалена`);
+      if (window.history.length > 1) navigate(-1);
+      else navigate("/books");
+    } catch (err) {
+      toast.error((err as Error).message);
+      setDeleting(false);
+    }
+  };
 
   const setRating = async (rating: number) => {
     const state = await saveState(book, { rating });
@@ -149,6 +174,11 @@ export default function BookPage() {
           <Button variant="outline" onClick={() => dialogs.addToShelf([book.id])}>
             <LibraryBig className="size-4" /> На полку
           </Button>
+          {book.can_delete && (
+            <Button variant="ghost" onClick={remove} disabled={deleting} className="text-danger hover:text-danger">
+              {deleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash className="size-4" />} Удалить книгу
+            </Button>
+          )}
         </div>
 
         <div className="flex min-w-0 flex-col gap-6">

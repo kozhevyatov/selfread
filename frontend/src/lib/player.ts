@@ -157,6 +157,8 @@ function parsePosition(pos: string): [number, number] | null {
 }
 
 export const player = {
+  /** id книги, которая сейчас в плеере */
+  bookId: () => state.book?.id ?? null,
   /** Начать книгу: с сохранённого места, с начала указанного файла или с секунды внутри файла. */
   open(book: BookDetail, opts: { index?: number; time?: number; autoplay?: boolean } = {}) {
     const same = state.book?.id === book.id;

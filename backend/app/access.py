@@ -58,3 +58,16 @@ def set_user_access(db: Session, user_id: int, access: list[tuple[int, bool]]) -
     if new_ids:
         for lid in db.scalars(select(Library.id).where(Library.id.in_(new_ids), Library.owner_id.is_(None))):
             db.add(LibraryAccess(user_id=user_id, library_id=lid, can_write=bool(wanted[lid])))
+
+
+def can_write(db: Session, user: User, lib: Library) -> bool:
+    """Можно ли менять файлы медиатеки: своя личная, общая с правом записи, администратор — любая общая."""
+    if not lib.enabled:
+        return False
+    if lib.owner_id is not None:
+        return lib.owner_id == user.id
+    if user.is_admin:
+        return True
+    row = db.get(LibraryAccess, (user.id, lib.id))
+    return bool(row and row.can_write)
+
