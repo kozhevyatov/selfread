@@ -11,11 +11,15 @@ import AdminPage from "@/pages/AdminPage";
 import BookPage from "@/pages/BookPage";
 import BooksPage from "@/pages/BooksPage";
 import HomePage from "@/pages/HomePage";
+import DownloadsPage from "@/pages/DownloadsPage";
 import LoginPage from "@/pages/LoginPage";
+import MorePage from "@/pages/MorePage";
 import ProfilePage from "@/pages/ProfilePage";
+import QuotesPage from "@/pages/QuotesPage";
 import ReaderPage from "@/pages/ReaderPage";
 import RegisterPage from "@/pages/RegisterPage";
 import SetupPage from "@/pages/SetupPage";
+import StatsPage from "@/pages/StatsPage";
 import ShelvesPage, { ShelfPage } from "@/pages/ShelvesPage";
 import WelcomePage from "@/pages/WelcomePage";
 
@@ -73,6 +77,7 @@ export default function App() {
         routes={[
           { path: "/", element: <HomePage /> },
           { path: "/books", element: <BooksPage mode="all" /> },
+          { path: "/ebooks", element: <BooksPage mode="ebook" /> },
           { path: "/audio", element: <BooksPage mode="audio" /> },
           { path: "/search", element: <BooksPage mode="search" /> },
           { path: "/libraries/:id", element: <BooksPage mode="library" /> },
@@ -80,6 +85,10 @@ export default function App() {
           { path: "/read/:id", element: <ReaderPage /> },
           { path: "/shelves", element: <ShelvesPage /> },
           { path: "/shelves/:id", element: <ShelfPage /> },
+          { path: "/quotes", element: <QuotesPage /> },
+          { path: "/stats", element: <StatsPage /> },
+          { path: "/downloads", element: <DownloadsPage /> },
+          { path: "/more", element: <MorePage /> },
           { path: "/profile", element: <ProfilePage /> },
           { path: "/admin", element: <AdminOnly><AdminPage /></AdminOnly> },
           { path: "*", element: <Navigate to="/" /> },

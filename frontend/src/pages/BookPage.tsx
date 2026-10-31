@@ -1,6 +1,8 @@
 import { useState, type ReactNode } from "react";
 import { BookCover, BookGrid, Rating, saveState, SeriesLine, STATUSES, statusLabel } from "@/components/books";
-import { ArrowLeft, BookOpen, Download, Headphones, LibraryBig, LoaderCircle, Lock, Play, Trash, Users } from "@/components/icons";
+import { ArrowLeft, Bookmark, BookOpen, Download, Headphones, LibraryBig, LoaderCircle, Lock, NotebookPen, Pencil, Play, Quote, Trash, Users } from "@/components/icons";
+import { OfflineButton } from "@/components/OfflineButton";
+import { colorValue, useAnnotations, whereLabel } from "@/lib/annotations";
 import { Section } from "@/components/Section";
 import { Button, buttonClass } from "@/components/ui/button";
 import { Badge, ErrorBox, PageLoader } from "@/components/ui/misc";
@@ -174,6 +176,12 @@ export default function BookPage() {
           <Button variant="outline" onClick={() => dialogs.addToShelf([book.id])}>
             <LibraryBig className="size-4" /> На полку
           </Button>
+          <OfflineButton book={book} />
+          {book.can_edit && (
+            <Button variant="ghost" onClick={() => dialogs.editBook(book)}>
+              <Pencil className="size-4" /> Изменить карточку
+            </Button>
+          )}
           {book.can_delete && (
             <Button variant="ghost" onClick={remove} disabled={deleting} className="text-danger hover:text-danger">
               {deleting ? <LoaderCircle className="size-4 animate-spin" /> : <Trash className="size-4" />} Удалить книгу
@@ -283,11 +291,54 @@ export default function BookPage() {
         </div>
       </div>
 
+      <BookNotes book={book} />
+
       {book.series_books.length > 0 && (
         <Section title={`Серия «${book.series}»`} link={`/books?series=${encodeURIComponent(book.series)}`}>
           <BookGrid books={book.series_books} />
         </Section>
       )}
     </div>
+  );
+}
+
+/** Закладки и цитаты пользователя в этой книге */
+function BookNotes({ book }: { book: BookDetail }) {
+  const notes = useAnnotations(book.id);
+  const items = [...notes.list].sort((a, b) => a.progress - b.progress);
+  if (!items.length) return null;
+  const go = (position: string) => {
+    if (book.kind === "audio") player.jump(book, position);
+    else navigate(`/read/${book.id}${position.startsWith("epubcfi(") ? `?at=${encodeURIComponent(position)}` : ""}`);
+  };
+  const quotes = items.filter((a) => a.kind === "quote").length;
+  return (
+    <Section title="Закладки и цитаты" link={quotes ? `/quotes?q=${encodeURIComponent(book.title)}` : undefined} linkLabel={quotes ? "Все цитаты" : undefined}>
+      <ul className="grid gap-3 md:grid-cols-2">
+        {items.slice(0, 40).map((a) => (
+          <li key={a.id}>
+            <button type="button" onClick={() => go(a.position)} className="card flex h-full w-full flex-col gap-2 p-4 text-left transition hover:-translate-y-0.5">
+              <span className="flex items-center gap-1.5 text-[12px] text-muted">
+                {a.kind === "bookmark" ? <Bookmark className="size-3.5 text-accent-ink" /> : <Quote className="size-3.5" style={{ color: colorValue(a.color) }} />}
+                <span className="truncate">{whereLabel(a)}</span>
+              </span>
+              {a.text && (
+                <span
+                  className={cn("line-clamp-5 leading-relaxed", a.kind === "quote" && "border-l-[3px] pl-3 font-serif")}
+                  style={a.kind === "quote" ? { borderColor: colorValue(a.color), fontFamily: "Literata, Georgia, serif" } : undefined}
+                >
+                  {a.text}
+                </span>
+              )}
+              {a.note && (
+                <span className="flex gap-1.5 text-sm text-muted">
+                  <NotebookPen className="mt-0.5 size-3.5 shrink-0" /> {a.note}
+                </span>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Section>
   );
 }

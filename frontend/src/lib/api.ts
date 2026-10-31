@@ -23,6 +23,8 @@ export type User = {
   palette_night: Palette;
   library_scope: LibraryScope;
   reader_prefs: string;
+  /** цель на год: сколько книг прочитать (0 — без цели) */
+  reading_goal: number;
   /** адрес аватарки или null — тогда показываем букву */
   avatar: string | null;
   created_at: string;
@@ -104,11 +106,84 @@ export type BookDetail = Book & {
   library: { id: number; name: string; scope: "personal" | "shared" } | null;
   scan_error: string | null;
   can_delete?: boolean;
+  can_edit?: boolean;
+  /** поля, исправленные вручную (сканер их не трогает) */
+  locked?: string[];
   shelves: { id: number; name: string }[];
   series_books: Book[];
 };
 
 export type BookList = { total: number; items: Book[] };
+
+export type AnnotationKind = "bookmark" | "quote";
+export type AnnotationColor = "yellow" | "green" | "blue" | "pink" | "purple";
+export type Annotation = {
+  id: number;
+  book_id: number;
+  kind: AnnotationKind;
+  /** CFI (электронная книга) или «номер_файла:секунды» (аудиокнига) */
+  position: string;
+  text: string;
+  note: string;
+  color: AnnotationColor;
+  chapter: string;
+  progress: number;
+  created_at: string;
+  updated_at: string;
+  /** ещё не отправлена на сервер (сохранена без связи) */
+  pending?: boolean;
+};
+export type AnnotationInput = Pick<Annotation, "kind" | "position" | "text" | "note" | "color" | "chapter" | "progress">;
+export type AnnotationWithBook = Annotation & { book: Book | null };
+
+export type MetaPatch = {
+  title?: string;
+  authors?: string[];
+  narrator?: string;
+  series?: string;
+  series_index?: number | null;
+  clear_series_index?: boolean;
+  year?: number | null;
+  clear_year?: boolean;
+  publisher?: string;
+  language?: string;
+  isbn?: string;
+  subjects?: string[];
+  description?: string;
+};
+
+export type LookupItem = {
+  source: string;
+  title: string;
+  authors: string[];
+  year: number | null;
+  publisher: string;
+  isbn: string;
+  language: string;
+  pages: number | null;
+  subjects: string[];
+  description: string;
+  cover: string;
+  series: string;
+  series_index: number | null;
+};
+
+export type Stats = {
+  year: number;
+  years: number[];
+  today: string;
+  goal: number;
+  seconds: { today: number; week: number; month: number; year: number; ebook: number; audio: number };
+  active_days: number;
+  avg_per_active_day: number;
+  streak: number;
+  best_streak: number;
+  /** YYYY-MM-DD → секунд */
+  days: Record<string, number>;
+  months: { month: number; ebook: number; audio: number; finished: number }[];
+  finished: (Book & { finished_at: string; seconds: number })[];
+  top: { book: Book; seconds: number }[];
+};
 
 export type Shelf = {
   id: number;
@@ -344,6 +419,12 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
 
 const json = (data: unknown) => JSON.stringify(data);
 
+/** Сегодняшняя дата по часам устройства: YYYY-MM-DD */
+export function localDay(d = new Date()) {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
 function qs(params: Record<string, unknown>) {
   const s = new URLSearchParams();
   Object.entries(params).forEach(([k, v]) => {
@@ -406,6 +487,8 @@ export function uploadFile(
 /** Обложка нужного размера (сервер отдаёт одну, размер — подсказка для будущего кэша) */
 export const coverUrl = (url: string | null | undefined) => url ?? null;
 export const fileUrl = (id: number, fmt?: string, download = false) => `/api/books/${id}/file${qs({ fmt, download: download || undefined })}`;
+/** Книга, сконвертированная сервером для читалки (DOCX, ODT, RTF, CHM → EPUB; CBR, CB7 → CBZ) */
+export const viewUrl = (id: number, fmt: string) => `/api/books/${id}/view?fmt=${encodeURIComponent(fmt)}`;
 export const audioUrl = (id: number, index: number, download = false) => `/api/books/${id}/audio/${index}${qs({ download: download || undefined })}`;
 
 export const api = {
@@ -439,7 +522,10 @@ export const api = {
   me: {
     update: (
       data: Partial<
-        Pick<User, "display_name" | "email" | "username" | "palette" | "palette_auto" | "palette_day" | "palette_night" | "library_scope" | "reader_prefs">
+        Pick<
+          User,
+          "display_name" | "email" | "username" | "palette" | "palette_auto" | "palette_day" | "palette_night" | "library_scope" | "reader_prefs" | "reading_goal"
+        >
       >,
     ) => request<User>("/api/me", { method: "PATCH", body: json(data) }),
     changePassword: (current_password: string, new_password: string) =>
@@ -462,6 +548,30 @@ export const api = {
     remove: (id: number) => request<{ ok: true }>(`/api/books/${id}`, { method: "DELETE" }),
     setState: (id: number, data: Partial<Pick<ReadState, "status" | "progress" | "position" | "chapter" | "rating">>) =>
       request<ReadState>(`/api/books/${id}/state`, { method: "PUT", body: json(data) }),
+    updateMeta: (id: number, data: MetaPatch) => request<BookDetail>(`/api/books/${id}/meta`, { method: "PATCH", body: json(data) }),
+    resetMeta: (id: number) => request<{ ok: true }>(`/api/books/${id}/meta/reset`, { method: "POST" }),
+    uploadCover: (id: number, image: Blob) => {
+      const form = new FormData();
+      form.append("file", image, "cover.jpg");
+      return request<BookDetail>(`/api/books/${id}/cover`, { method: "POST", body: form });
+    },
+    coverFromUrl: (id: number, url: string) => request<BookDetail>(`/api/books/${id}/cover/url`, { method: "POST", body: json({ url }) }),
+    lookup: (id: number, q = "", isbn = "") => request<{ items: LookupItem[]; errors: string[] }>(`/api/books/${id}/lookup${qs({ q, isbn })}`),
+  },
+
+  annotations: {
+    forBook: (bookId: number) => request<Annotation[]>(`/api/books/${bookId}/annotations`),
+    create: (bookId: number, data: AnnotationInput) => request<Annotation>(`/api/books/${bookId}/annotations`, { method: "POST", body: json(data) }),
+    update: (id: number, data: Partial<Pick<Annotation, "note" | "color">>) => request<Annotation>(`/api/annotations/${id}`, { method: "PATCH", body: json(data) }),
+    remove: (id: number) => request<{ ok: true }>(`/api/annotations/${id}`, { method: "DELETE" }),
+    all: (p: { q?: string; kind?: AnnotationKind | ""; offset?: number; limit?: number } = {}) =>
+      request<{ total: number; items: AnnotationWithBook[] }>(`/api/annotations${qs(p)}`),
+  },
+
+  stats: {
+    get: (year?: number) => request<Stats>(`/api/stats${qs({ year, today: localDay() })}`),
+    track: (data: { book_id: number; day: string; seconds: number; kind: BookKind }) =>
+      request<{ ok: true; seconds: number }>("/api/stats/track", { method: "POST", body: json(data) }),
   },
 
   uploads: {

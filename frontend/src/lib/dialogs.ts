@@ -1,9 +1,11 @@
 import { useSyncExternalStore } from "react";
+import type { BookDetail } from "./api";
 
 export type DialogState =
   | { kind: "none" }
   | { kind: "shelf"; bookIds: number[] }
   | { kind: "upload"; libraryId?: number }
+  | { kind: "editBook"; book: BookDetail }
   | { kind: "confirm"; title: string; text: string; action: string; danger?: boolean; resolve: (ok: boolean) => void };
 
 let state: DialogState = { kind: "none" };
@@ -19,6 +21,8 @@ export const dialogs = {
   addToShelf: (bookIds: number[]) => set({ kind: "shelf", bookIds }),
   /** Загрузка книг: можно сразу указать медиатеку */
   upload: (libraryId?: number) => set({ kind: "upload", libraryId }),
+  /** Правка карточки книги */
+  editBook: (book: BookDetail) => set({ kind: "editBook", book }),
   confirm: (opts: { title: string; text: string; action: string; danger?: boolean }) =>
     new Promise<boolean>((resolve) => set({ kind: "confirm", ...opts, resolve })),
   close: () => {

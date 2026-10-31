@@ -1,0 +1,50 @@
+# SelfRead — этот файл лежит в ПАПКЕ ПРОЕКТА, рядом с app/, а не внутри неё:
+#
+#   /volume1/docker/selfread/
+#     docker-compose.yml   ← этот файл (копия deploy/docker-compose.yml из репозитория)
+#     .env                 ← пути и настройки этого сервера (docker compose читает его сам)
+#     app/                 ← git-клон репозитория (автодеплой обновляет только его)
+#     data/                ← база (если SQLite), ключ, обложки, кэш
+#     media/               ← личные медиатеки пользователей: <логин>/books
+#
+# Запуск из папки проекта: docker compose up -d --build
+# В Container Manager: «Проект» → путь — папка проекта (не app).
+name: selfread
+
+services:
+  app:
+    build: ./app
+    image: selfread:latest
+    container_name: selfread
+    restart: unless-stopped
+    ports:
+      - "1334:1334"
+    volumes:
+      - ${DATA_PATH:-./data}:/data
+      - ${MEDIA_PATH:-./media}:/uploads
+
+      # Общие папки с книгами — всё внутри /library видно в «обзоре папок» при создании медиатеки.
+      # :ro — только чтение (загружать туда из браузера нельзя; уберите :ro, если нужно).
+      # Пути — в .env: BOOKS_DIR=/volume2/books. Пока их нет — пустые заглушки из репозитория.
+      - ${BOOKS_DIR:-./app/empty/books}:/library/books:ro
+      - ${AUDIOBOOKS_DIR:-./app/empty/audiobooks}:/library/audiobooks:ro
+      # Ещё папки — здесь же, ниже:
+      # - /volume1/comics:/library/comics:ro
+    networks:
+      - db                                 # сеть с контейнером MariaDB (хост db)
+    environment:
+      TZ: Asia/Novosibirsk
+      # Мастер первого запуска без токена открывается только из локальной сети.
+      # SETUP_TOKEN: "придумайте-длинную-строку"
+      # Если указать, шаг выбора БД в мастере пропускается.
+      # DATABASE_URL: "mysql+pymysql://selfread:ПАРОЛЬ@db:3306/selfread?charset=utf8mb4"
+      # Секрет для JWT. Если не задан — генерируется в /data/secret.key
+      # SECRET_KEY: ""
+
+    # Чтобы файлы принадлежали вашему пользователю DSM, а не root, — его uid:gid (id ИМЯ по SSH):
+    # user: "1026:100"
+
+networks:
+  db:
+    external: true
+    name: db

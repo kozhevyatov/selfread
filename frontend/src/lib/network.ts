@@ -1,10 +1,11 @@
-/** Есть ли связь с сервером. Без неё приложение работает со скачанной музыкой. */
+/** Есть ли связь с сервером. Без неё приложение работает со скачанными книгами. */
 import { useSyncExternalStore } from "react";
 
 let offline = false;
 let retryTimer = 0;
 const listeners = new Set<() => void>();
-let onBackOnline: (() => void) | null = null;
+const onBackOnline = new Set<() => void>();
+const backOnline = () => onBackOnline.forEach((fn) => fn());
 
 export function isOffline() {
   return offline;
@@ -14,6 +15,8 @@ export function setOffline(value: boolean) {
   if (offline === value) return;
   offline = value;
   listeners.forEach((l) => l());
+  // связь вернулась — отправить накопленное, обновить сессию
+  if (!value) window.setTimeout(backOnline, 0);
   window.clearInterval(retryTimer);
   if (value) {
     // пока нет связи — раз в 15 секунд проверяем, не вернулась ли
@@ -22,7 +25,6 @@ export function setOffline(value: boolean) {
         const res = await fetch("/api/health", { cache: "no-store" });
         if (res.ok) {
           setOffline(false);
-          onBackOnline?.();
         }
       } catch {
         /* всё ещё нет */
@@ -31,9 +33,12 @@ export function setOffline(value: boolean) {
   }
 }
 
-/** Что сделать, когда связь вернулась (например, обновить сессию) */
+/** Что сделать, когда связь вернулась (обновить сессию, отправить накопленное) */
 export function whenBackOnline(fn: () => void) {
-  onBackOnline = fn;
+  onBackOnline.add(fn);
+  return () => {
+    onBackOnline.delete(fn);
+  };
 }
 
 export function useOffline() {
@@ -56,7 +61,6 @@ if (typeof window !== "undefined") {
       .then((r) => {
         if (r.ok) {
           setOffline(false);
-          onBackOnline?.();
         }
       })
       .catch(() => {});

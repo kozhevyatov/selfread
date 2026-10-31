@@ -1,11 +1,14 @@
 /** Мини-плеер аудиокниги над нижним меню и полноэкранный плеер с главами, скоростью и таймером сна. */
 import { useEffect, useState } from "react";
 import { formatTime } from "@/lib/format";
-import { chaptersOf, currentChapter, overall, player, usePlayer, type PlayerState } from "@/lib/player";
+import { addAnnotation, removeAnnotation, useAnnotations } from "@/lib/annotations";
+import type { BookDetail } from "@/lib/api";
+import { bookmarkHere, chaptersOf, currentChapter, overall, player, usePlayer, type PlayerState } from "@/lib/player";
+import { toast } from "@/lib/toast";
 import { Link, useLocation } from "@/lib/router";
 import { cn } from "@/lib/utils";
 import { BookCover } from "./books";
-import { ChevronDown, LoaderCircle, Moon, RotateCcw, RotateCw, SkipBack, SkipForward, X } from "./icons";
+import { Bookmark, ChevronDown, LoaderCircle, Moon, RotateCcw, RotateCw, SkipBack, SkipForward, Trash, X } from "./icons";
 import { PauseFill, PlayFill } from "./icon";
 
 const RATES = [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -63,6 +66,19 @@ function FullPlayer({ s, onClose }: { s: PlayerState; onClose: () => void }) {
   const pos = Math.max(0, s.time - start);
   const len = Math.max(0, end - start);
   const [sleepOpen, setSleepOpen] = useState(false);
+  const [tab, setTab] = useState<"chapters" | "bookmarks">("chapters");
+  const notes = useAnnotations(book.id);
+  const bookmarks = notes.list.filter((a) => a.kind === "bookmark").sort((a, b) => a.progress - b.progress);
+  const addBookmark = async () => {
+    const here = bookmarkHere();
+    try {
+      await addAnnotation(book.id, { kind: "bookmark", position: here.position, text: `${here.chapter ? `${here.chapter} · ` : ""}${formatTime(s.time)}`, note: "", color: "yellow", chapter: here.chapter.slice(0, 500), progress: here.progress });
+      toast.success("Закладка добавлена");
+      setTab("bookmarks");
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
   const sleepLeft = s.sleepAt ? Math.max(0, Math.round((s.sleepAt - Date.now()) / 60000)) : null;
 
   useEffect(() => {
@@ -125,6 +141,9 @@ function FullPlayer({ s, onClose }: { s: PlayerState; onClose: () => void }) {
           </div>
 
           <div className="flex flex-wrap items-center justify-center gap-2">
+            <button type="button" onClick={() => void addBookmark()} className="flex h-10 items-center gap-2 rounded-xl border bg-surface px-3 text-sm font-semibold">
+              <Bookmark className="size-4" /> Закладка
+            </button>
             <label className="flex h-10 items-center gap-2 rounded-xl border bg-surface px-3 text-sm font-semibold">
               Скорость
               <select value={s.rate} onChange={(e) => player.setRate(Number(e.target.value))} className="bg-transparent outline-none" aria-label="Скорость">
@@ -171,7 +190,39 @@ function FullPlayer({ s, onClose }: { s: PlayerState; onClose: () => void }) {
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col gap-3">
-          <h3 className="title-display text-xl">{chapters.length > 1 ? "Главы" : "Файл"}</h3>
+          <div role="tablist" className="flex items-center gap-5">
+            <button type="button" role="tab" aria-selected={tab === "chapters"} onClick={() => setTab("chapters")} className={cn("title-display text-xl", tab !== "chapters" && "text-faint hover:text-muted")}>
+              {chapters.length > 1 ? "Главы" : "Файл"}
+            </button>
+            <button type="button" role="tab" aria-selected={tab === "bookmarks"} onClick={() => setTab("bookmarks")} className={cn("title-display text-xl", tab !== "bookmarks" && "text-faint hover:text-muted")}>
+              Закладки{bookmarks.length ? ` · ${bookmarks.length}` : ""}
+            </button>
+          </div>
+          {tab === "bookmarks" ? (
+            <div className="card max-h-[60vh] overflow-y-auto lg:max-h-none lg:flex-1">
+              {bookmarks.length === 0 ? (
+                <p className="px-4 py-4 text-sm text-muted">Закладок пока нет. Кнопка «Закладка» запоминает текущее место.</p>
+              ) : (
+                <ul className="divide-y">
+                  {bookmarks.map((a) => (
+                    <li key={a.id} className="flex items-center gap-1 pr-2">
+                      <button type="button" onClick={() => player.jump(book as BookDetail, a.position)} className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3 text-left hover:bg-surface-2">
+                        <Bookmark className="size-4 shrink-0 text-accent-ink" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">{a.text || a.chapter}</span>
+                          {a.note && <span className="block truncate text-sm text-muted">{a.note}</span>}
+                        </span>
+                        <span className="num text-sm text-muted">{Math.round(a.progress * 100)}%</span>
+                      </button>
+                      <button type="button" aria-label="Удалить закладку" onClick={() => void removeAnnotation(a).catch((e: Error) => toast.error(e.message))} className="flex size-9 items-center justify-center rounded-lg text-faint hover:bg-surface-2 hover:text-danger">
+                        <Trash className="size-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ) : (
           <ol className="card max-h-[60vh] divide-y overflow-y-auto lg:max-h-none lg:flex-1">
             {chapters.map((c, i) => {
               const active = ch !== null && c.index === ch.index && c.start === ch.start;
@@ -191,6 +242,7 @@ function FullPlayer({ s, onClose }: { s: PlayerState; onClose: () => void }) {
               );
             })}
           </ol>
+          )}
         </div>
       </div>
     </div>

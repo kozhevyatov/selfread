@@ -152,10 +152,16 @@ export function patchEverywhere(fn: (data: unknown) => unknown) {
   }
 }
 
-export function clearCache() {
-  for (const e of cache.values()) {
+/** Забыть данные пользователя (выход). Публичные запросы (статус установки, настройки) остаются,
+ * а те, что сейчас показаны на экране, перезапрашиваются — иначе страница застрянет на загрузке. */
+export function clearCache(keep: string[] = ["setup-status", "settings"]) {
+  for (const [k, e] of cache.entries()) {
+    if (keep.some((name) => k.startsWith(keyOf([name]).slice(0, -1)))) continue;
     e.data = undefined;
+    e.error = null;
     e.stale = true;
+    e.updatedAt = 0;
     publish(e);
+    if (e.listeners.size && e.fetcher) run(e).catch(() => {});
   }
 }

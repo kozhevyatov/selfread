@@ -73,6 +73,7 @@ class UserOut(BaseModel):
     palette_night: str = "library"
     library_scope: str = "all"
     reader_prefs: str = "{}"
+    reading_goal: int = 0
     avatar: str | None = None
     created_at: datetime
     last_seen_at: datetime | None = None
@@ -88,6 +89,7 @@ class ProfileUpdate(BaseModel):
     palette_night: Palette | None = None
     library_scope: LibraryScope | None = None
     reader_prefs: str | None = Field(default=None, max_length=10000)
+    reading_goal: int | None = Field(default=None, ge=0, le=1000)
 
 
 class PasswordChange(BaseModel):
@@ -201,3 +203,52 @@ class ShelfUpdate(BaseModel):
 
 class ShelfBooks(BaseModel):
     book_ids: list[int]
+
+
+# ---------- метаданные книги (ручная правка) ----------
+class MetaUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    authors: list[str] | None = Field(default=None, max_length=20)
+    narrator: str | None = Field(default=None, max_length=512)
+    series: str | None = Field(default=None, max_length=512)
+    series_index: float | None = None
+    clear_series_index: bool = False
+    year: int | None = Field(default=None, ge=0, le=3000)
+    clear_year: bool = False
+    publisher: str | None = Field(default=None, max_length=255)
+    language: str | None = Field(default=None, max_length=16)
+    isbn: str | None = Field(default=None, max_length=32)
+    subjects: list[str] | None = Field(default=None, max_length=50)
+    description: str | None = Field(default=None, max_length=100000)
+
+
+class CoverUrl(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
+# ---------- закладки и цитаты ----------
+AnnotationKind = Literal["bookmark", "quote"]
+AnnotationColor = Literal["yellow", "green", "blue", "pink", "purple"]
+
+
+class AnnotationCreate(BaseModel):
+    kind: AnnotationKind = "quote"
+    position: str = Field(default="", max_length=4000)
+    text: str = Field(default="", max_length=20000)
+    note: str = Field(default="", max_length=20000)
+    color: AnnotationColor = "yellow"
+    chapter: str = Field(default="", max_length=512)
+    progress: float = Field(default=0, ge=0, le=1)
+
+
+class AnnotationUpdate(BaseModel):
+    note: str | None = Field(default=None, max_length=20000)
+    color: AnnotationColor | None = None
+
+
+# ---------- статистика ----------
+class TrackIn(BaseModel):
+    book_id: int
+    day: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    seconds: int = Field(ge=1, le=3600)
+    kind: Literal["ebook", "audio"] = "ebook"

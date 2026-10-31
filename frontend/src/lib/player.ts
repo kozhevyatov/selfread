@@ -6,8 +6,9 @@
  * Позиция хранится как «номер_файла:секунды» — с ней книга продолжается на любом устройстве.
  */
 import { useSyncExternalStore } from "react";
-import { api, audioUrl, type BookDetail } from "./api";
+import { audioUrl, type BookDetail } from "./api";
 import { invalidate, setQueryData } from "./query";
+import { sendState, sendTrack } from "./sync";
 
 export type Chapter = { title: string; index: number; start: number; end: number };
 
@@ -120,18 +121,45 @@ function save(finished = false) {
   const position = `${state.index}:${state.time.toFixed(1)}`;
   if (position === lastSaved && !finished) return;
   lastSaved = position;
-  api.books
-    .setState(b.id, {
-      progress: finished ? 1 : Math.round(fraction * 1000) / 1000,
-      position,
-      chapter: currentChapter()?.title?.slice(0, 500) ?? "",
-      ...(finished ? { status: "finished" as const } : {}),
-    })
+  sendState(b.id, {
+    progress: finished ? 1 : Math.round(fraction * 1000) / 1000,
+    position,
+    chapter: currentChapter()?.title?.slice(0, 500) ?? "",
+    ...(finished ? { status: "finished" as const } : {}),
+  })
     .then((st) => {
+      if (!st) return; // нет связи — отправится позже
       setQueryData(["book", b.id], (d: BookDetail | undefined) => (d ? { ...d, state: st } : d));
       invalidate(["home"]);
     })
     .catch(() => {});
+}
+
+// ---------------- время прослушивания (статистика) ----------------
+
+let listened = 0;
+let listenedBook = 0;
+function sendListened() {
+  if (listened > 0 && listenedBook) void sendTrack(listenedBook, "audio", listened);
+  listened = 0;
+}
+if (typeof window !== "undefined") {
+  window.setInterval(() => {
+    const id = state.book?.id ?? 0;
+    if (id !== listenedBook) {
+      sendListened();
+      listenedBook = id;
+    }
+    if (state.playing && id) listened += 15;
+    if (listened >= 60) sendListened();
+  }, 15_000);
+  window.addEventListener("pagehide", sendListened);
+}
+
+/** Текущее место для закладки: «номер_файла:секунды», глава и доля */
+export function bookmarkHere() {
+  const { fraction } = overall();
+  return { position: `${state.index}:${state.time.toFixed(1)}`, chapter: currentChapter()?.title ?? "", progress: fraction };
 }
 
 // ---------------- управление ----------------
@@ -159,6 +187,13 @@ function parsePosition(pos: string): [number, number] | null {
 export const player = {
   /** id книги, которая сейчас в плеере */
   bookId: () => state.book?.id ?? null,
+  /** Перейти к закладке «номер_файла:секунды» (книга открывается в плеере, если ещё не открыта) */
+  jump(book: BookDetail, position: string) {
+    const p = parsePosition(position);
+    if (!p) return;
+    if (state.book?.id === book.id) loadFile(p[0], p[1], true);
+    else player.open(book, { index: p[0], time: p[1] });
+  },
   /** Начать книгу: с сохранённого места, с начала указанного файла или с секунды внутри файла. */
   open(book: BookDetail, opts: { index?: number; time?: number; autoplay?: boolean } = {}) {
     const same = state.book?.id === book.id;

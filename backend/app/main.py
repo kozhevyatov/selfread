@@ -12,7 +12,7 @@ from . import db
 from . import scanner as _scanner  # noqa: F401 — регистрирует запуск сканера после подключения БД
 from .config import VERSION, settings
 from .limits import BodyLimitMiddleware
-from .routers import admin, auth, books, profile, setup, shelves, uploads
+from .routers import admin, annotations, auth, book_edit, books, profile, setup, shelves, stats, uploads
 
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
@@ -29,7 +29,7 @@ CSP = "; ".join(
         "worker-src 'self' blob:",
         "style-src 'self' 'unsafe-inline' blob: https://fonts.googleapis.com",
         "font-src 'self' data: blob: https://fonts.gstatic.com",
-        "img-src 'self' data: blob:",
+        "img-src 'self' data: blob: https:",
         "media-src 'self' blob:",
         "frame-src 'self' blob:",
         "connect-src 'self' blob: data:",
@@ -66,6 +66,9 @@ app.include_router(profile.avatar_router)
 app.include_router(books.router)
 app.include_router(shelves.router)
 app.include_router(uploads.router)
+app.include_router(annotations.router)
+app.include_router(stats.router)
+app.include_router(book_edit.router)
 
 
 @app.get("/api/health", tags=["system"])

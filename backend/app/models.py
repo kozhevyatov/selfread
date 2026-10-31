@@ -55,6 +55,8 @@ class User(Base):
     reader_prefs: Mapped[str] = mapped_column(Text, default="{}")
     # 0 — нет аватарки; иначе номер версии (для сброса кэша в браузере)
     avatar_version: Mapped[int] = mapped_column(Integer, default=0)
+    # Цель на год: сколько книг прочитать (0 — без цели)
+    reading_goal: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -156,6 +158,8 @@ class Book(Base):
     # 0 — обложки нет; иначе версия (сброс кэша браузера)
     cover_version: Mapped[int] = mapped_column(Integer, default=0)
     scan_error: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    # Поля, исправленные вручную, через запятую (title,authors,…,cover) — сканер их не перезаписывает
+    locked: Mapped[str] = mapped_column(String(512), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -205,3 +209,44 @@ class ShelfBook(Base):
     shelf_id: Mapped[int] = mapped_column(ForeignKey("shelves.id", ondelete="CASCADE"), primary_key=True)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), primary_key=True, index=True)
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Annotation(Base):
+    """Закладка или цитата (с заметкой) пользователя в книге."""
+
+    __tablename__ = "annotations"
+    __table_args__ = (Index("ix_annotations_user_book", "user_id", "book_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id", ondelete="CASCADE"), index=True)
+    # bookmark — закладка, quote — цитата (выделенный текст, может быть с заметкой)
+    kind: Mapped[str] = mapped_column(String(16), default="quote")
+    # Где: CFI для электронной книги, «номер_файла:секунды» для аудиокниги
+    position: Mapped[str] = mapped_column(Text, default="")
+    text: Mapped[str] = mapped_column(LongText, default="")
+    note: Mapped[str] = mapped_column(Text, default="")
+    color: Mapped[str] = mapped_column(String(16), default="yellow")
+    chapter: Mapped[str] = mapped_column(String(512), default="")
+    progress: Mapped[float] = mapped_column(Float, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ReadingDay(Base):
+    """Сколько секунд пользователь читал/слушал книгу в этот день (для статистики)."""
+
+    __tablename__ = "reading_days"
+    __table_args__ = (
+        UniqueConstraint("user_id", "book_id", "day", name="uq_reading_day"),
+        Index("ix_reading_days_user_day", "user_id", "day"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # книгу удалили — минуты в статистике остаются
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id", ondelete="SET NULL"), nullable=True, index=True)
+    day: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD по часам пользователя
+    kind: Mapped[str] = mapped_column(String(8), default="ebook")
+    seconds: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

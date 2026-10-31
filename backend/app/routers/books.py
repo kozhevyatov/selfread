@@ -246,6 +246,8 @@ def get_book(book_id: int, db: Session = Depends(get_db), user: User = Depends(g
             "library": {"id": lib.id, "name": lib.name, "scope": "personal" if lib.owner_id else "shared"} if lib else None,
             "scan_error": book.scan_error,
             "can_delete": bool(lib and can_write(db, user, lib) and fs_writable(lib.path)),
+            "can_edit": bool(lib and can_write(db, user, lib)),
+            "locked": [f for f in (book.locked or "").split(",") if f],
             "shelves": [
                 {"id": s.id, "name": s.name}
                 for s in db.scalars(
@@ -343,6 +345,43 @@ def book_audio(
         raise HTTPException(404, "Файл не найден")
     entry = files[index]
     return _file_response(db, book, entry["path"], entry.get("format", book.format), download)
+
+
+# ---------------- конвертация (DOCX, ODT, RTF, CHM → EPUB; CBR, CB7 → CBZ) ----------------
+
+
+@router.get("/books/{book_id}/view")
+def book_converted(
+    book_id: int,
+    fmt: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_media_user),
+) -> FileResponse:
+    """Книга в формате для читалки: конвертируем один раз и кэшируем в data/converted."""
+    from ..convert import TARGET, ConvertError, convert  # noqa: PLC0415
+
+    book = _get_book(db, user, book_id)
+    if fmt not in TARGET:
+        raise HTTPException(400, "Этот формат не конвертируется")
+    files = json.loads(book.files or "[]")
+    entry = next((f for f in files if f.get("format") == fmt), None)
+    lib = db.get(Library, book.library_id)
+    if not entry or not lib:
+        raise HTTPException(404, "Такого формата у книги нет")
+    root = Path(lib.path).resolve()
+    src = (root / entry["path"]).resolve()
+    if root not in src.parents or not src.is_file():
+        raise HTTPException(404, "Файл не найден — возможно, его переместили. Запустите сканирование.")
+    try:
+        out = convert(book.id, book.fingerprint, fmt, src, book.title, _split(book.authors))
+    except ConvertError as exc:
+        raise HTTPException(422, str(exc))
+    target = TARGET[fmt]
+    return FileResponse(
+        out,
+        media_type=MIME["epub"] if target == "epub" else MIME["cbz"],
+        headers={"Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff", "X-Book-Format": target},
+    )
 
 
 # ---------------- страницы DjVu картинками (для читалки) ----------------
@@ -533,6 +572,9 @@ def delete_book(book_id: int, db: Session = Depends(get_db), user: User = Depend
             log.warning("Не удалось убрать папку %s: %s", folder, exc)
     cover_path(book.id).unlink(missing_ok=True)
     shutil.rmtree(DATA_DIR / "pages" / str(book.id), ignore_errors=True)
+    from ..convert import remove_cached  # noqa: PLC0415
+
+    remove_cached(book.id)
     for model in (ReadState, ShelfBook):
         for row in db.scalars(select(model).where(model.book_id == book.id)):
             db.delete(row)

@@ -48,7 +48,7 @@ def update_profile(data: ProfileUpdate, db: Session = Depends(get_db), user: Use
             if taken:
                 raise HTTPException(409, "Этот email уже занят")
             user.email = email
-    for name in ("palette", "palette_auto", "palette_day", "palette_night", "library_scope", "reader_prefs"):
+    for name in ("palette", "palette_auto", "palette_day", "palette_night", "library_scope", "reader_prefs", "reading_goal"):
         value = getattr(data, name)
         if value is not None:
             setattr(user, name, value)

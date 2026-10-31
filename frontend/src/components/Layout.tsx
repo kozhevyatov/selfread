@@ -7,7 +7,11 @@ import { isActive, Link, navigate, useLocation } from "@/lib/router";
 import { cn, hueOf } from "@/lib/utils";
 import {
   Book,
+  BookOpen,
+  ChartColumn,
   ChevronRight,
+  CloudDownload,
+  Ellipsis,
   CloudUpload,
   Headphones,
   House,
@@ -16,7 +20,7 @@ import {
   LogOut,
   Palette,
   Plus,
-  Search,
+  Quote,
   Settings,
   Shield,
   User,
@@ -32,8 +36,16 @@ import { dialogs } from "@/lib/dialogs";
 const NAV = [
   { to: "/", label: "Главная", icon: House },
   { to: "/books", label: "Все книги", icon: Book },
+  { to: "/ebooks", label: "Электронные книги", icon: BookOpen },
   { to: "/audio", label: "Аудиокниги", icon: Headphones },
   { to: "/shelves", label: "Полки", icon: LibraryBig },
+];
+
+/** Второй блок меню: своё — цитаты, статистика, скачанное */
+export const MINE = [
+  { to: "/quotes", label: "Цитаты и закладки", icon: Quote },
+  { to: "/stats", label: "Статистика", icon: ChartColumn },
+  { to: "/downloads", label: "На устройстве", icon: CloudDownload },
 ];
 
 const TABS = [
@@ -41,7 +53,7 @@ const TABS = [
   { to: "/books", label: "Книги", icon: Book },
   { to: "/audio", label: "Аудио", icon: Headphones },
   { to: "/shelves", label: "Полки", icon: LibraryBig },
-  { to: "/search", label: "Поиск", icon: Search },
+  { to: "/more", label: "Ещё", icon: Ellipsis },
 ];
 
 /** Аватарка: квадрат со скруглением, без картинки — первая буква на цветном фоне. */
@@ -139,6 +151,11 @@ function Sidebar() {
       </Link>
       <nav aria-label="Основное" className="flex flex-col gap-0.5">
         {NAV.map((item) => (
+          <NavLink key={item.to} {...item} pathname={pathname} />
+        ))}
+      </nav>
+      <nav aria-label="Моё" className="-mt-3 flex flex-col gap-0.5 border-t pt-3">
+        {MINE.map((item) => (
           <NavLink key={item.to} {...item} pathname={pathname} />
         ))}
       </nav>
@@ -254,15 +271,20 @@ function TabBar() {
 
 function OfflineBanner() {
   return (
-    <div className="card mb-6 flex items-center gap-3 px-4 py-3 text-sm">
+    <div className="card mb-6 flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
       <WifiOff className="size-5 shrink-0 text-muted" />
-      <span>Нет связи с сервером. Показано то, что уже было загружено.</span>
+      <span className="flex-1">Нет связи с сервером. Скачанные на устройство книги открываются как обычно.</span>
+      <Link to="/downloads" className="font-semibold text-accent-ink hover:underline">
+        На устройстве
+      </Link>
     </div>
   );
 }
 
 export function Layout({ children }: { children: ReactNode }) {
-  const offline = useOffline();
+  const { pathname } = useLocation();
+  // на «На устройстве» (и на главной без связи — это она же) своё подробное сообщение
+  const offline = useOffline() && pathname !== "/downloads" && pathname !== "/";
   const playing = Boolean(usePlayer().book);
   return (
     <div className="flex h-dvh overflow-hidden">

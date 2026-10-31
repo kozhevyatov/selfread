@@ -10,6 +10,7 @@ import { Button } from "./ui/button";
 import { Dialog } from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Spinner } from "./ui/misc";
+import { EditBookDialog } from "./EditBookDialog";
 import { UploadDialog } from "./UploadDialog";
 
 /** «На полку»: отметить полки для книги (или нескольких) и создать новую. */
@@ -123,6 +124,8 @@ export function DialogHost() {
       return <Confirm {...state} />;
     case "upload":
       return <UploadDialog libraryId={state.libraryId} />;
+    case "editBook":
+      return <EditBookDialog book={state.book} />;
     default:
       return null;
   }

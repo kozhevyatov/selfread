@@ -36,7 +36,7 @@ const STATUS_FILTERS: { value: ReadStatus | ""; label: string }[] = [
  * «Все книги» (/books), «Аудиокниги» (/audio), медиатека (/libraries/:id), поиск (/search).
  * Фильтры живут в адресе — их можно сохранить в закладки и вернуться кнопкой «назад».
  */
-export default function BooksPage({ mode = "all" }: { mode?: "all" | "audio" | "library" | "search" }) {
+export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "audio" | "library" | "search" }) {
   const params = useSearchParams();
   const { id } = useParams<{ id: string }>();
   const libraryId = mode === "library" ? Number(id) : undefined;
@@ -46,7 +46,7 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "audio" | "
   const author = params.get("author") ?? "";
   const series = params.get("series") ?? "";
   const sort = params.get("sort") ?? (series ? "series" : "added");
-  const kind: BookKind | "" = mode === "audio" ? "audio" : ((params.get("kind") ?? "") as BookKind | "");
+  const kind: BookKind | "" = mode === "audio" ? "audio" : mode === "ebook" ? "ebook" : ((params.get("kind") ?? "") as BookKind | "");
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState(q);
 
@@ -68,9 +68,12 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "audio" | "
 
   const library = libraries.data?.find((l) => l.id === libraryId);
   const title =
-    mode === "audio" ? "Аудиокниги" : mode === "library" ? (library?.name ?? "Медиатека") : mode === "search" ? "Поиск" : series ? series : author ? author : "Все книги";
+    mode === "audio" ? "Аудиокниги" : mode === "ebook" && !series && !author ? "Электронные книги" : mode === "library" ? (library?.name ?? "Медиатека") : mode === "search" ? "Поиск" : series ? series : author ? author : "Все книги";
   const formats = Object.entries(facets.data?.formats ?? {})
-    .filter(([f]) => (mode === "audio" ? ["mp3", "m4b", "m4a", "ogg", "opus", "flac", "aac", "wav", "oga"].includes(f) : true))
+    .filter(([f]) => {
+      const isAudio = ["mp3", "m4b", "m4a", "ogg", "opus", "flac", "aac", "wav", "oga"].includes(f);
+      return mode === "audio" ? isAudio : mode === "ebook" ? !isAudio : true;
+    })
     .sort((a, b) => b[1] - a[1]);
 
   const searchSubmit = (e: FormEvent) => {

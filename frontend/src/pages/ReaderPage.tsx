@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   ArrowLeft,
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Download,
@@ -14,13 +15,18 @@ import {
   Menu as MenuIcon,
   Minimize2 as Minimize,
   Minus,
+  NotebookPen,
   Plus,
   Search,
   TriangleAlert,
   X,
 } from "@/components/icons";
-import { api, fileUrl, type BookDetail } from "@/lib/api";
-import { loadBookSource, pickFormat } from "@/lib/bookSources";
+import { AnnotationSheet, NotesPanel, SelectionBar } from "@/components/ReaderNotes";
+import { addAnnotation, colorValue, removeAnnotation, updateAnnotation, useAnnotations } from "@/lib/annotations";
+import { api, fileUrl, type Annotation, type AnnotationColor, type BookDetail } from "@/lib/api";
+import { CONVERT, loadBookSource, pickFormat } from "@/lib/bookSources";
+import { sendState, sendTrack } from "@/lib/sync";
+import { toast } from "@/lib/toast";
 import { invalidate, setQueryData, useQuery } from "@/lib/query";
 import {
   bookCSS,
@@ -50,19 +56,43 @@ type FoliateView = HTMLElement & {
   getSectionFractions: () => number[];
   search: (opts: { query: string }) => AsyncGenerator<any>;
   clearSearch: () => void;
+  addAnnotation: (a: { value: string; color?: string }) => Promise<unknown>;
+  deleteAnnotation: (a: { value: string }) => Promise<unknown>;
+  getCFI: (index: number, range?: Range) => string;
 };
 
 type TocItem = { label: string; href: string; subitems?: TocItem[] };
-type Location = { fraction: number; chapter: string; cfi: string; current?: number; total?: number };
+type Location = {
+  fraction: number;
+  chapter: string;
+  /** CFI видимого диапазона (сохраняется как место чтения) */
+  cfi: string;
+  /** начало и конец видимой страницы — для закладок */
+  start?: string;
+  end?: string;
+  /** начало текста страницы — подпись закладки */
+  excerpt?: string;
+  current?: number;
+  total?: number;
+};
+type Selected = { cfi: string; text: string; doc: Document };
+type Draft = Pick<Annotation, "kind" | "position" | "text" | "note" | "color" | "chapter" | "progress"> & { id?: number };
 
-let foliateLoaded: Promise<unknown> | null = null;
+type FoliateModules = { Overlayer: any; CFI: any };
+let foliateLoaded: Promise<FoliateModules> | null = null;
 function loadFoliate() {
   // движок лежит в public/foliate и грузится как есть, без сборки
-  foliateLoaded ??= import(/* @vite-ignore */ `${window.location.origin}/foliate/view.js`);
+  const base = `${window.location.origin}/foliate`;
+  foliateLoaded ??= Promise.all([
+    import(/* @vite-ignore */ `${base}/view.js`),
+    import(/* @vite-ignore */ `${base}/overlayer.js`),
+    import(/* @vite-ignore */ `${base}/epubcfi.js`),
+  ]).then(([, overlayer, cfi]) => ({ Overlayer: overlayer.Overlayer, CFI: cfi }));
   return foliateLoaded;
 }
 
-const FIXED = new Set(["pdf", "cbz", "djvu"]);
+const FIXED = new Set(["pdf", "cbz", "djvu", "cbr", "cb7"]);
+const COMIC = new Set(["cbz", "cbr", "cb7"]);
 
 // ---------------- оглавление ----------------
 
@@ -334,7 +364,12 @@ export default function ReaderPage() {
   const [loaded, setLoaded] = useState<{ done: number; total: number } | null>(null);
   const [toc, setToc] = useState<TocItem[]>([]);
   const [loc, setLoc] = useState<Location>({ fraction: 0, chapter: "", cfi: "" });
-  const [panel, setPanel] = useState<"toc" | "settings" | "search" | null>(null);
+  const [panel, setPanel] = useState<"toc" | "settings" | "search" | "notes" | null>(null);
+  const [selected, setSelected] = useState<Selected | null>(null);
+  const [sheet, setSheet] = useState<Draft | null>(null);
+  const modules = useRef<FoliateModules | null>(null);
+  const activity = useRef(Date.now());
+  const annotationClick = useRef(0);
   const [bars, setBars] = useState(true);
   const [fullscreen, setFullscreen] = useState(false);
   const [sectionMarks, setSectionMarks] = useState<number[]>([]);
@@ -342,6 +377,11 @@ export default function ReaderPage() {
   const pending = useRef<Location | null>(null);
 
   const book = detail.data;
+  const notes = useAnnotations(bookId, Boolean(book && book.kind === "ebook"));
+  const quotes = notes.list.filter((a) => a.kind === "quote" && a.position.startsWith("epubcfi("));
+  const bookmarks = notes.list.filter((a) => a.kind === "bookmark");
+  const quotesRef = useRef(quotes);
+  quotesRef.current = quotes;
   const fmt = book ? (params.get("fmt") && book.formats.includes(params.get("fmt")!) ? params.get("fmt")! : pickFormat(book)) : null;
   const fixed = fmt ? FIXED.has(fmt) : false;
   const fixedRef = useRef(fixed);
@@ -355,9 +395,9 @@ export default function ReaderPage() {
     if (!l || !book) return;
     pending.current = null;
     const progress = Math.max(0, Math.min(1, l.fraction));
-    api.books
-      .setState(book.id, { progress, position: l.cfi, chapter: l.chapter.slice(0, 500) })
+    sendState(book.id, { progress, position: l.cfi, chapter: l.chapter.slice(0, 500) })
       .then((state) => {
+        if (!state) return; // нет связи — отправится позже
         setQueryData(["book", book.id], (b: BookDetail | undefined) => (b ? { ...b, state } : b));
         invalidate(["home"]);
       })
@@ -393,7 +433,7 @@ export default function ReaderPage() {
     setStatus("loading");
     (async () => {
       try {
-        await loadFoliate();
+        modules.current = await loadFoliate();
         source = await loadBookSource(book, fmt, (done, total) => setLoaded({ done, total }));
         if (cancelled) return;
         view = document.createElement("foliate-view") as FoliateView;
@@ -404,10 +444,37 @@ export default function ReaderPage() {
         if (cancelled) return;
         view.addEventListener("relocate", (e: any) => {
           const d = e.detail;
+          activity.current = Date.now();
+          const CFI = modules.current?.CFI;
+          let start = d.cfi ?? "";
+          let end = d.cfi ?? "";
+          try {
+            if (CFI && d.cfi) {
+              start = CFI.collapse(d.cfi);
+              end = CFI.collapse(d.cfi, true);
+            }
+          } catch {
+            /* CFI без диапазона */
+          }
+          let excerpt = "";
+          try {
+            if (d.range) {
+              // заголовки и абзацы — через пробел, а не слитно
+              const frag: DocumentFragment = d.range.cloneContents();
+              frag.querySelectorAll?.("h1,h2,h3,h4,h5,h6,p,div,li,br,section").forEach((el) => el.append(" "));
+              const text = (frag.textContent ?? "").replace(/\s+/g, " ").trim();
+              excerpt = text.length > 160 ? `${text.slice(0, 160).replace(/\s+\S*$/, "")}…` : text;
+            }
+          } catch {
+            excerpt = "";
+          }
           const l: Location = {
             fraction: Number.isFinite(d.fraction) ? d.fraction : 0,
             chapter: d.tocItem?.label ?? "",
             cfi: d.cfi ?? "",
+            start,
+            end,
+            excerpt,
             // PDF, DjVu, CBZ — номер страницы = номер секции
             current: fixedRef.current && d.section ? d.section.current : d.location?.current,
             total: fixedRef.current && d.section ? d.section.total : d.location?.total,
@@ -415,15 +482,55 @@ export default function ReaderPage() {
           setLoc(l);
           scheduleSave(l);
         });
+        // цитаты: подсветка в тексте
+        view.addEventListener("create-overlay", () => {
+          for (const a of quotesRef.current) void view?.addAnnotation({ value: a.position, color: a.color }).catch(() => {});
+        });
+        view.addEventListener("draw-annotation", (e: any) => {
+          const { draw, annotation } = e.detail;
+          draw(modules.current!.Overlayer.highlight, { color: colorValue(annotation.color) });
+        });
+        view.addEventListener("show-annotation", (e: any) => {
+          annotationClick.current = Date.now();
+          const a = quotesRef.current.find((q) => q.position === e.detail.value);
+          if (a) setSheet(a);
+        });
         view.addEventListener("load", (e: any) => {
           const doc: Document = e.detail.doc;
+          const index: number = e.detail.index;
           doc.addEventListener("keydown", onKey);
+          const bump = () => (activity.current = Date.now());
+          doc.addEventListener("pointerdown", bump, { passive: true });
+          doc.addEventListener("wheel", bump, { passive: true });
+          doc.addEventListener("scroll", bump, { passive: true });
           // тап по тексту без выделения — показать/спрятать панели
           doc.addEventListener("click", () => {
             const sel = doc.getSelection?.();
             if (sel && !sel.isCollapsed) return;
-            setBars((b) => !b);
-            setPanel(null);
+            window.setTimeout(() => {
+              if (Date.now() - annotationClick.current < 400) return; // это был тап по цитате
+              setBars((b) => !b);
+              setPanel(null);
+            }, 0);
+          });
+          // выделение текста — панель «цитата / заметка / копировать»
+          let timer = 0;
+          doc.addEventListener("selectionchange", () => {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(() => {
+              const sel = doc.getSelection?.();
+              const text = sel && !sel.isCollapsed ? sel.toString().replace(/\s+\n/g, "\n").trim() : "";
+              if (!sel || !text || text.length < 2 || !sel.rangeCount) {
+                setSelected((cur) => (cur && cur.doc === doc ? null : cur));
+                return;
+              }
+              try {
+                const cfi = view!.getCFI(index, sel.getRangeAt(0));
+                setSelected({ cfi, text: text.slice(0, 20000), doc });
+              } catch {
+                setSelected(null);
+              }
+            }, 350);
           });
         });
         setToc((view.book?.toc as TocItem[]) ?? []);
@@ -434,7 +541,15 @@ export default function ReaderPage() {
         }
         applyPrefs(view, fmt);
         const pos = book.state.position;
-        const lastLocation = pos && pos.startsWith("epubcfi(") ? pos : book.state.progress > 0 && book.state.status !== "finished" ? { fraction: book.state.progress } : null;
+        const at = params.get("at");
+        const lastLocation =
+          at && at.startsWith("epubcfi(")
+            ? at
+            : pos && pos.startsWith("epubcfi(")
+              ? pos
+              : book.state.progress > 0 && book.state.status !== "finished"
+                ? { fraction: book.state.progress }
+                : null;
         await view.init({ lastLocation, showTextStart: !lastLocation && !FIXED.has(fmt) });
         if (!cancelled) setStatus("ready");
       } catch (err) {
@@ -457,6 +572,145 @@ export default function ReaderPage() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [book?.id, fmt]);
+
+  // ---- цитаты: дорисовать новые, стереть удалённые, перекрасить ----
+  const drawn = useRef(new Map<string, string>());
+  const quotesKey = quotes.map((q) => `${q.position}|${q.color}`).join("\n");
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || status !== "ready") return;
+    const next = new Map(quotes.map((q) => [q.position, q.color]));
+    for (const [value] of drawn.current) if (!next.has(value)) void view.deleteAnnotation({ value }).catch(() => {});
+    for (const [value, color] of next) if (drawn.current.get(value) !== color) void view.addAnnotation({ value, color }).catch(() => {});
+    drawn.current = next;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotesKey, status]);
+
+  // ---- закладка на текущей странице ----
+  const inPage = (pos: string) => {
+    const CFI = modules.current?.CFI;
+    if (!CFI || !loc.start || !pos.startsWith("epubcfi(")) return false;
+    try {
+      return CFI.compare(pos, loc.start) >= 0 && CFI.compare(pos, loc.end || loc.start) <= 0;
+    } catch {
+      return false;
+    }
+  };
+  const pageBookmark = bookmarks.find((b) => inPage(b.position));
+  const toggleBookmark = async () => {
+    if (!book) return;
+    try {
+      if (pageBookmark) {
+        await removeAnnotation(pageBookmark);
+        toast.success("Закладка убрана");
+      } else {
+        const page = loc.current !== undefined && loc.total ? `Страница ${loc.current + 1}` : "";
+        await addAnnotation(book.id, {
+          kind: "bookmark",
+          position: loc.start || loc.cfi,
+          text: loc.excerpt || page,
+          note: "",
+          color: "yellow",
+          chapter: loc.chapter.slice(0, 500),
+          progress: Math.max(0, Math.min(1, loc.fraction)),
+        });
+        toast.success("Закладка добавлена");
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  // ---- выделение → цитата ----
+  const clearSelection = () => {
+    try {
+      selected?.doc.getSelection()?.removeAllRanges();
+    } catch {
+      /* документ уже выгружен */
+    }
+    setSelected(null);
+  };
+  const saveQuote = async (color: AnnotationColor, note = "") => {
+    if (!book || !selected) return;
+    const sel = selected;
+    clearSelection();
+    try {
+      await addAnnotation(book.id, {
+        kind: "quote",
+        position: sel.cfi,
+        text: sel.text,
+        note,
+        color,
+        chapter: loc.chapter.slice(0, 500),
+        progress: Math.max(0, Math.min(1, loc.fraction)),
+      });
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  const openDraft = () => {
+    if (!selected) return;
+    setSheet({ kind: "quote", position: selected.cfi, text: selected.text, note: "", color: "yellow", chapter: loc.chapter, progress: loc.fraction });
+  };
+  const saveSheet = async (patch: { note: string; color: AnnotationColor }) => {
+    const draft = sheet;
+    if (!draft || !book) return;
+    setSheet(null);
+    try {
+      if (draft.id === undefined) {
+        clearSelection();
+        await addAnnotation(book.id, { ...draft, ...patch, chapter: draft.chapter.slice(0, 500) });
+        toast.success("Цитата сохранена");
+      } else {
+        const existing = notes.list.find((a) => a.id === draft.id);
+        if (existing) await updateAnnotation(existing, patch);
+      }
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+  const deleteSheet = async () => {
+    const existing = sheet?.id !== undefined ? notes.list.find((a) => a.id === sheet.id) : null;
+    setSheet(null);
+    if (!existing) return;
+    try {
+      await removeAnnotation(existing);
+    } catch (err) {
+      toast.error((err as Error).message);
+    }
+  };
+
+  // ---- время чтения для статистики: считаем, пока книга на экране и с ней что-то делают ----
+  useEffect(() => {
+    if (!book || book.kind !== "ebook") return;
+    activity.current = Date.now();
+    let acc = 0;
+    const send = () => {
+      if (acc > 0) void sendTrack(book.id, "ebook", acc);
+      acc = 0;
+    };
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === "visible" && Date.now() - activity.current < 3 * 60_000) acc += 15;
+      if (acc >= 60) send();
+    }, 15_000);
+    const onVis = () => {
+      if (document.visibilityState === "hidden") send();
+      else activity.current = Date.now();
+    };
+    const bump = () => (activity.current = Date.now());
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", send);
+    window.addEventListener("keydown", bump);
+    window.addEventListener("pointerdown", bump);
+    return () => {
+      window.clearInterval(tick);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", send);
+      window.removeEventListener("keydown", bump);
+      window.removeEventListener("pointerdown", bump);
+      send();
+    };
+  }, [book?.id, book?.kind]);
 
   // ---- применение настроек ----
   const applyPrefs = (view: FoliateView, format: string | null) => {
@@ -526,7 +780,8 @@ export default function ReaderPage() {
   };
 
   // тёмная тема для PDF и DjVu — инверсия страниц (комиксы не трогаем)
-  const filter = fixed && theme.dark && fmt !== "cbz" ? "invert(0.88) hue-rotate(180deg)" : prefs.theme === "sepia" && fixed && fmt !== "cbz" ? "sepia(0.35)" : "none";
+  const comic = fmt ? COMIC.has(fmt) : false;
+  const filter = fixed && theme.dark && !comic ? "invert(0.88) hue-rotate(180deg)" : prefs.theme === "sepia" && fixed && !comic ? "sepia(0.35)" : "none";
 
   if (detail.error) {
     return (
@@ -538,7 +793,7 @@ export default function ReaderPage() {
   if (book && !fmt) {
     return (
       <ReaderMessage onClose={close} title="Этот формат пока не открывается в читалке">
-        <p>Читалка понимает EPUB, FB2, MOBI, AZW3, PDF, DjVu, CBZ и TXT. Файл можно скачать и открыть в другом приложении.</p>
+        <p>Читалка понимает EPUB, FB2, MOBI, AZW3, PDF, DjVu, CBZ, CBR, CB7, TXT, HTML, DOCX, ODT, RTF и CHM. Файл можно скачать и открыть в другом приложении.</p>
         <a href={fileUrl(book.id, book.format, true)} className="reader-btn mt-4 inline-flex h-11 items-center gap-2 px-4 font-semibold">
           <Download className="size-4" /> Скачать {book.format.toUpperCase()}
         </a>
@@ -590,6 +845,19 @@ export default function ReaderPage() {
           </div>
           <div className="truncate text-[12px] opacity-60">{loc.chapter || (book ? book.authors.join(", ") : "")}</div>
         </div>
+        <button
+          type="button"
+          onClick={toggleBookmark}
+          disabled={status !== "ready"}
+          aria-label={pageBookmark ? "Убрать закладку" : "Закладка на этой странице"}
+          aria-pressed={Boolean(pageBookmark)}
+          className="reader-btn size-11"
+        >
+          <Bookmark className="size-5" style={pageBookmark ? { fill: "var(--reader-link)", color: "var(--reader-link)" } : undefined} />
+        </button>
+        <button type="button" onClick={() => setPanel(panel === "notes" ? null : "notes")} aria-label="Закладки и цитаты" aria-pressed={panel === "notes"} className="reader-btn size-11">
+          <NotebookPen className="size-5" />
+        </button>
         {!fixed && (
           <button type="button" onClick={() => setPanel(panel === "search" ? null : "search")} aria-label="Поиск по книге" aria-pressed={panel === "search"} className="reader-btn size-11">
             <Search className="size-5" />
@@ -623,7 +891,11 @@ export default function ReaderPage() {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
             <LoaderCircle className="size-7 animate-spin opacity-60" />
             <span className="text-sm opacity-60">
-              {loaded?.total ? `Загружаю книгу · ${Math.round((loaded.done / loaded.total) * 100)}%` : "Открываю книгу…"}
+              {loaded?.total
+                ? `Загружаю книгу · ${Math.round((loaded.done / loaded.total) * 100)}%`
+                : fmt && CONVERT[fmt]
+                  ? `Готовлю книгу для чтения (${fmt.toUpperCase()} → ${CONVERT[fmt].toUpperCase()})… Первый раз это может занять до минуты.`
+                  : "Открываю книгу…"}
             </span>
           </div>
         )}
@@ -675,6 +947,16 @@ export default function ReaderPage() {
         <span className="num hidden w-28 text-right text-[12px] opacity-60 sm:block">{loc.current !== undefined && loc.total ? `стр. ${loc.current + 1} из ${loc.total}` : ""}</span>
       </footer>
 
+      {selected && !sheet && <SelectionBar text={selected.text} onHighlight={(c) => void saveQuote(c)} onNote={openDraft} onClose={clearSelection} />}
+      {sheet && (
+        <AnnotationSheet
+          annotation={sheet}
+          onSave={(patch) => void saveSheet(patch)}
+          onDelete={sheet.id !== undefined ? () => void deleteSheet() : undefined}
+          onClose={() => setSheet(null)}
+        />
+      )}
+
       {/* панели: оглавление слева, настройки и поиск справа */}
       {panel && (
         <div className="absolute inset-0 z-30" onClick={() => setPanel(null)}>
@@ -686,11 +968,11 @@ export default function ReaderPage() {
               panel === "toc" ? "left-0" : "right-0",
             )}
             style={{ background: theme.bg, borderColor: `color-mix(in srgb, ${theme.fg} 12%, transparent)` }}
-            aria-label={panel === "toc" ? "Оглавление" : panel === "search" ? "Поиск" : "Настройки чтения"}
+            aria-label={panel === "toc" ? "Оглавление" : panel === "search" ? "Поиск" : panel === "notes" ? "Закладки и цитаты" : "Настройки чтения"}
           >
             <div className="flex items-center justify-between gap-3 px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
               <h2 className="text-xl font-semibold" style={{ fontFamily: "Literata, Georgia, serif" }}>
-                {panel === "toc" ? "Оглавление" : panel === "search" ? "Поиск по книге" : "Настройки чтения"}
+                {panel === "toc" ? "Оглавление" : panel === "search" ? "Поиск по книге" : panel === "notes" ? "Закладки и цитаты" : "Настройки чтения"}
               </h2>
               <button type="button" onClick={() => setPanel(null)} aria-label="Закрыть" className="reader-btn size-10">
                 <X className="size-5" />
@@ -708,6 +990,16 @@ export default function ReaderPage() {
                 <div className="px-2">
                   <SearchPanel view={viewRef.current} onGo={goTo} />
                 </div>
+              )}
+              {panel === "notes" && (
+                <NotesPanel
+                  items={[...notes.list].sort((a, b) => a.progress - b.progress)}
+                  onGo={(a) => (a.position.startsWith("epubcfi(") ? goTo(a.position) : void viewRef.current?.goToFraction(a.progress))}
+                  onOpen={(a) => {
+                    setPanel(null);
+                    setSheet(a);
+                  }}
+                />
               )}
             </div>
           </aside>

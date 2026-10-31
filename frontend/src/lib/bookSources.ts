@@ -2,16 +2,24 @@
  * Откуда читалка берёт книгу.
  * - EPUB, FB2, FBZ, MOBI, AZW, AZW3, PDF, CBZ — открывает движок foliate-js;
  * - TXT и HTML — превращаем в «книгу» сами (разбиваем на главы и страницы);
- * - DjVu — сервер отдаёт страницы картинками, читалка показывает их как комикс.
+ * - DjVu — сервер отдаёт страницы картинками, читалка показывает их как комикс;
+ * - DOCX, ODT, RTF, CHM — сервер один раз конвертирует в EPUB, CBR и CB7 — в CBZ.
  */
-import { fileUrl, type BookDetail } from "./api";
+import { fileUrl, viewUrl, type BookDetail } from "./api";
 
 /** Форматы, которые умеет открыть читалка, — в порядке предпочтения. */
 export const READABLE = ["epub", "fb2", "fbz", "azw3", "mobi", "azw", "pdf", "cbz", "djvu", "txt", "html", "htm"];
+/** Конвертирует сервер: исходный формат → формат для читалки */
+export const CONVERT: Record<string, "epub" | "cbz"> = { docx: "epub", odt: "epub", rtf: "epub", chm: "epub", cbr: "cbz", cb7: "cbz" };
 
 export function pickFormat(book: Pick<BookDetail, "formats" | "kind">): string | null {
   if (book.kind !== "ebook") return null;
-  return READABLE.find((f) => book.formats.includes(f)) ?? null;
+  return READABLE.find((f) => book.formats.includes(f)) ?? Object.keys(CONVERT).find((f) => book.formats.includes(f)) ?? null;
+}
+
+/** Ширина картинок страниц DjVu для этого экрана (одинаковая — чтобы скачанное офлайн совпадало) */
+export function djvuPageWidth() {
+  return Math.min(2400, Math.round(Math.max(window.screen?.width || window.innerWidth, window.screen?.height || window.innerHeight) * Math.min(2, window.devicePixelRatio || 1)));
 }
 
 export function canRead(book: Pick<BookDetail, "formats" | "kind">) {
@@ -32,9 +40,17 @@ export type FoliateBook = {
   destroy?: () => void;
 };
 
-async function download(id: number, fmt: string, onProgress?: (loaded: number, total: number) => void): Promise<Blob> {
-  const res = await fetch(fileUrl(id, fmt), { credentials: "include" });
-  if (!res.ok) throw new Error(res.status === 404 ? "Файл книги не найден на сервере" : `Не удалось загрузить книгу (${res.status})`);
+async function download(url: string, onProgress?: (loaded: number, total: number) => void): Promise<Blob> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    let detail = "";
+    try {
+      detail = (await res.json()).detail;
+    } catch {
+      /* не JSON */
+    }
+    throw new Error(detail || (res.status === 404 ? "Файл книги не найден на сервере" : `Не удалось загрузить книгу (${res.status})`));
+  }
   const total = Number(res.headers.get("content-length")) || 0;
   if (!res.body || !onProgress) return res.blob();
   const reader = res.body.getReader();
@@ -153,7 +169,7 @@ function makeHtmlBook(html: string, title: string): FoliateBook {
 /** DjVu: страницы рендерит сервер, читалка показывает их по одной, как комикс. */
 function makeDjvuBook(book: BookDetail): FoliateBook {
   const count = Math.max(1, book.pages ?? 1);
-  const width = Math.min(2400, Math.round(Math.max(window.innerWidth, window.innerHeight) * Math.min(2, window.devicePixelRatio || 1)));
+  const width = djvuPageWidth();
   // по две ссылки на страницу: картинка и HTML-обёртка (blob: — относительные пути внутри не работают)
   const urls = new Map<number, string[]>();
   const free = (i: number) => {
@@ -217,7 +233,12 @@ function makeDjvuBook(book: BookDetail): FoliateBook {
 export async function loadBookSource(book: BookDetail, fmt: string, onProgress?: (loaded: number, total: number) => void): Promise<File | FoliateBook> {
   const author = book.authors.join(", ");
   if (fmt === "djvu") return makeDjvuBook(book);
-  const blob = await download(book.id, fmt, onProgress);
+  const target = CONVERT[fmt];
+  if (target) {
+    const blob = await download(viewUrl(book.id, fmt), onProgress);
+    return new File([blob], `book.${target}`, { type: blob.type });
+  }
+  const blob = await download(fileUrl(book.id, fmt), onProgress);
   if (fmt === "txt") return makeTextBook(decodeText(await blob.arrayBuffer()), book.title, author);
   if (fmt === "html" || fmt === "htm") return makeHtmlBook(decodeText(await blob.arrayBuffer()), book.title);
   const name = fmt === "fbz" ? "book.fb2.zip" : `book.${fmt}`;

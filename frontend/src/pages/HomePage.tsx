@@ -9,7 +9,9 @@ import { Empty, ErrorBox, PageLoader } from "@/components/ui/misc";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { greeting, todayLabel } from "@/lib/format";
+import { useOffline } from "@/lib/network";
 import { useQuery } from "@/lib/query";
+import DownloadsPage from "./DownloadsPage";
 import { Link, navigate } from "@/lib/router";
 
 export function SearchBox({ initial = "", autoFocus = false, className = "" }: { initial?: string; autoFocus?: boolean; className?: string }) {
@@ -42,7 +44,10 @@ export default function HomePage() {
   const targets = useQuery(["upload-targets"], api.uploads.targets, { staleTime: 5 * 60_000 });
   const canUpload = Boolean(targets.data?.length);
 
+  const offline = useOffline();
   if (home.isLoading) return <PageLoader />;
+  // без связи главная — это скачанные книги
+  if (home.error && offline) return <DownloadsPage />;
   if (home.error) return <ErrorBox error={home.error} />;
   const data = home.data!;
   const empty = data.counts.total === 0;

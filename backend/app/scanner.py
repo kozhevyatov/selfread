@@ -214,21 +214,30 @@ def discover(root: Path, stop: threading.Event | None = None) -> list[Found]:
 
 
 def _apply_meta(book: Book, meta: Meta, fallback_title: str, fallback_authors: list[str]) -> None:
+    """Записать метаданные из файла. Поля, исправленные вручную (book.locked), не трогаем."""
+    locked = {f for f in (book.locked or "").split(",") if f}
     title = (meta.title or fallback_title).strip() or fallback_title
     authors = [a for a in dict.fromkeys(" ".join(a.split()) for a in (meta.authors or fallback_authors)) if a]
-    book.title = title[:512]
-    book.sort_title = sort_title(title)
-    book.authors = "; ".join(authors)[:1024]
-    book.author_sort = author_sort(authors[0]) if authors else ""
-    book.narrator = meta.narrator[:512]
-    book.series = meta.series[:512]
-    book.series_index = meta.series_index
-    book.language = meta.language[:16]
-    book.publisher = meta.publisher[:255]
-    book.year = meta.year
-    book.isbn = meta.isbn[:32]
-    book.subjects = "; ".join(dict.fromkeys(s.strip() for s in meta.subjects if s.strip()))[:1024]
-    book.description = meta.description
+    if "title" not in locked:
+        book.title = title[:512]
+        book.sort_title = sort_title(title)
+    if "authors" not in locked:
+        book.authors = "; ".join(authors)[:1024]
+        book.author_sort = author_sort(authors[0]) if authors else ""
+    values = {
+        "narrator": meta.narrator[:512],
+        "series": meta.series[:512],
+        "series_index": meta.series_index,
+        "language": meta.language[:16],
+        "publisher": meta.publisher[:255],
+        "year": meta.year,
+        "isbn": meta.isbn[:32],
+        "subjects": "; ".join(dict.fromkeys(s.strip() for s in meta.subjects if s.strip()))[:1024],
+        "description": meta.description,
+    }
+    for name, value in values.items():
+        if name not in locked:
+            setattr(book, name, value)
     book.pages = meta.pages
 
 
@@ -479,7 +488,8 @@ class Scanner:
             book.scan_error = error or None
             book.updated_at = now
             db.flush()
-            _save_cover(book, meta.cover)
+            if "cover" not in (book.locked or "").split(","):
+                _save_cover(book, meta.cover)
             # коммит после каждой книги: SQLite не держит блокировку записи долго (вход, прогресс не ждут)
             db.commit()
         removed = 0
@@ -487,6 +497,9 @@ class Scanner:
             for kh, book in existing.items():
                 if kh not in seen:
                     cover_path(book.id).unlink(missing_ok=True)
+                    from .convert import remove_cached  # noqa: PLC0415
+
+                    remove_cached(book.id)
                     db.delete(book)
                     removed += 1
         db.flush()

@@ -7,11 +7,12 @@ COPY frontend/ ./
 RUN npm run build
 
 # ---------- 2. Бэкенд + статика ----------
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
-# poppler-utils — обложки PDF (первая страница), djvulibre-bin — обложки и страницы DjVu
+# poppler-utils — обложки PDF (первая страница), djvulibre-bin — обложки и страницы DjVu,
+# pandoc — DOCX/ODT/RTF/CHM → EPUB, libarchive-tools и unar — комиксы CBR/CB7, libchm-bin — распаковка CHM
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends poppler-utils djvulibre-bin \
+    && apt-get install -y --no-install-recommends poppler-utils djvulibre-bin pandoc libarchive-tools unar libchm-bin \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

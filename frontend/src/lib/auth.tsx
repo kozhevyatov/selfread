@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, onAuthChange, refreshSession, setSession, type User } from "./api";
 import { clearCache } from "./query";
+import { flushOutbox } from "./sync";
 import { syncReaderPrefsFromUser } from "./readerPrefs";
 import { syncThemeFromUser } from "./theme";
 
@@ -18,7 +19,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       syncThemeFromUser(u);
       syncReaderPrefsFromUser(u);
     });
-    refreshSession().finally(() => setReady(true));
+    refreshSession()
+      .then((data) => {
+        if (data) void flushOutbox(); // накопленное без связи — на сервер
+      })
+      .finally(() => setReady(true));
     return off;
   }, []);
 
