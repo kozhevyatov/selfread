@@ -813,7 +813,7 @@ export default function ReaderPage() {
           "--reader-bg": theme.bg,
           "--reader-fg": theme.fg,
           "--reader-link": theme.link,
-          colorScheme: theme.dark ? "dark" : "light",
+          colorScheme: theme.dark ? "only dark" : "only light",
         } as CSSProperties
       }
     >

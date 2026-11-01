@@ -155,10 +155,12 @@
     -webkit-tap-highlight-color: transparent;
     -webkit-text-size-adjust: 100%;
     text-size-adjust: 100%;
-    color-scheme: light;
+    /* only — браузеру запрещено самому «затемнять» сайт (тёмный режим Samsung Internet, Chrome):
+       у SelfRead свои палитры, и выбранная должна выглядеть как выбрана */
+    color-scheme: only light;
   }
   html.dark {
-    color-scheme: dark;
+    color-scheme: only dark;
   }
   html,
   body {
@@ -270,4 +272,12 @@
 }
 .animate-sheet-up {
   animation: sheet-up 0.32s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Сигнал браузерам (Samsung Internet), что у сайта есть своя тёмная тема и затемнять его не нужно.
+   Сама тёмная палитра включается в профиле: «Библиотека» или автопереключение день/ночь. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --system-dark: 1;
+  }
 }

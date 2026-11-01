@@ -80,6 +80,7 @@ function apply() {
   root.dataset.palette = active;
   root.classList.toggle("dark", info.dark);
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", info.themeColor);
+  document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", info.dark ? "only dark" : "only light");
   listeners.forEach((l) => l());
 }
 

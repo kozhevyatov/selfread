@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BookGrid } from "@/components/books";
-import { Book as BookIcon, CloudUpload, Headphones, Search, X } from "@/components/icons";
+import { BooksByFolder, FolderView } from "@/components/FolderView";
+import { Book as BookIcon, CloudUpload, Folder, Headphones, LayoutGrid, Search, X } from "@/components/icons";
 import { dialogs } from "@/lib/dialogs";
 import { PageHeader } from "@/components/Section";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,7 @@ const SORTS = [
   { value: "author", label: "По автору" },
   { value: "series", label: "По серии" },
   { value: "year", label: "По году" },
+  { value: "folder", label: "По папкам" },
 ];
 
 const STATUS_FILTERS: { value: ReadStatus | ""; label: string }[] = [
@@ -46,6 +48,9 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
   const author = params.get("author") ?? "";
   const series = params.get("series") ?? "";
   const sort = params.get("sort") ?? (series ? "series" : "added");
+  // в медиатеке: обычный список или «Папки» — навигация как в проводнике
+  const folderView = mode === "library" && params.get("view") === "folders";
+  const folderPath = params.get("path") ?? "";
   const kind: BookKind | "" = mode === "audio" ? "audio" : mode === "ebook" ? "ebook" : ((params.get("kind") ?? "") as BookKind | "");
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState(q);
@@ -57,8 +62,10 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
   const libraries = useQuery(["libraries"], api.libraries);
   const targets = useQuery(["upload-targets"], api.uploads.targets, { staleTime: 5 * 60_000 });
   const facets = useQuery(["facets"], api.books.facets);
-  const list = useQuery(["books", filterKey, limit], () =>
-    api.books.list({ q, status, format, author, series, sort, kind, library: libraryId, limit }),
+  const list = useQuery(
+    ["books", filterKey, limit],
+    () => api.books.list({ q, status, format, author, series, sort, kind, library: libraryId, limit }),
+    { enabled: !folderView },
   );
 
   // при «Показать ещё» и смене фильтров не мигаем загрузкой — держим прошлый список, пока идёт запрос
@@ -110,6 +117,35 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
         }
       />
 
+      {mode === "library" && (
+        <div role="tablist" aria-label="Вид" className="-mt-2 flex gap-1 self-start rounded-xl bg-surface-2 p-1">
+          {(
+            [
+              [false, "Все книги", LayoutGrid],
+              [true, "Папки", Folder],
+            ] as const
+          ).map(([v, label, Icon]) => (
+            <button
+              key={label}
+              type="button"
+              role="tab"
+              aria-selected={folderView === v}
+              onClick={() => {
+                setSearchParam("path", null);
+                setSearchParam("view", v ? "folders" : null);
+              }}
+              className={cn("flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-semibold", folderView === v ? "bg-surface shadow-sm" : "text-muted hover:text-fg")}
+            >
+              <Icon className="size-4" /> {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {folderView && libraryId ? (
+        <FolderView libraryId={libraryId} path={folderPath} />
+      ) : (
+      <>
       <div className="flex flex-col gap-3">
         <form onSubmit={searchSubmit} role="search" className="flex flex-wrap gap-3">
           <label className="flex h-11 min-w-0 flex-1 basis-64 items-center gap-2 rounded-xl border bg-surface px-3.5 focus-within:border-accent">
@@ -200,7 +236,7 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
         </div>
       ) : (
         <>
-          <BookGrid books={data.items} />
+          {sort === "folder" ? <BooksByFolder books={data.items} libraryNames={new Map((libraries.data ?? []).map((l) => [l.id, l.name]))} /> : <BookGrid books={data.items} />}
           {data.items.length < data.total && (
             <div className="flex justify-center">
               <Button variant="outline" onClick={() => setLimit((l) => l + PAGE)} disabled={list.isFetching}>
@@ -209,6 +245,8 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
             </div>
           )}
         </>
+      )}
+      </>
       )}
     </div>
   );

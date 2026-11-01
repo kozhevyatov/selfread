@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
@@ -84,6 +84,12 @@ def _state_out(state: ReadState | None) -> dict:
     }
 
 
+def folder_of(key: str) -> str:
+    """Папка книги от корня медиатеки: «Толстой/Война и мир» (для аудиокниги — папка, где лежит её папка)."""
+    parent = PurePosixPath(key or ".").parent.as_posix()
+    return "" if parent == "." else parent
+
+
 def book_brief(book: Book, state: ReadState | None = None) -> dict:
     return {
         "id": book.id,
@@ -99,6 +105,7 @@ def book_brief(book: Book, state: ReadState | None = None) -> dict:
         "duration": book.duration,
         "cover": _cover(book),
         "library_id": book.library_id,
+        "folder": folder_of(book.key),
         "created_at": book.created_at,
         "state": _state_out(state),
     }
@@ -149,6 +156,33 @@ def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current
     ]
 
 
+@router.get("/libraries/{library_id}/folders")
+def library_folders(library_id: int, path: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Папки медиатеки на уровне path: вложенные папки с числом книг внутри (с подпапками)."""
+    if library_id not in allowed_library_ids(db, user, scoped=False):
+        raise HTTPException(404, "Медиатека не найдена")
+    lib = db.get(Library, library_id)
+    base = path.strip("/")
+    prefix = f"{base}/" if base else ""
+    counts: dict[str, int] = {}
+    here = 0
+    for key in db.scalars(select(Book.key).where(Book.library_id == library_id)):
+        folder = folder_of(key)
+        if folder == base:
+            here += 1
+        elif folder.startswith(prefix) or (not base and folder):
+            name = folder[len(prefix) :].split("/", 1)[0]
+            counts[name] = counts.get(name, 0) + 1
+    parent = None if not base else ("/".join(base.split("/")[:-1]))
+    return {
+        "library": {"id": lib.id, "name": lib.name} if lib else None,
+        "path": base,
+        "parent": parent,
+        "books_here": here,
+        "folders": [{"name": n, "path": f"{prefix}{n}", "count": c} for n, c in sorted(counts.items(), key=lambda x: x[0].lower())],
+    }
+
+
 # ---------------- книги ----------------
 
 SORTS = {
@@ -157,6 +191,8 @@ SORTS = {
     "author": (Book.author_sort.asc(), Book.series.asc(), Book.series_index.asc(), Book.sort_title.asc()),
     "series": (Book.series.asc(), Book.series_index.asc(), Book.sort_title.asc()),
     "year": (Book.year.desc(), Book.sort_title.asc()),
+    # как на диске: по медиатекам и папкам, внутри папки — по названию файла
+    "folder": (Book.library_id.asc(), Book.key.asc()),
 }
 
 
@@ -170,6 +206,7 @@ def list_books(
     shelf: int | None = None,
     author: str = "",
     series: str = "",
+    folder: str | None = None,
     sort: str = "added",
     offset: int = Query(0, ge=0),
     limit: int = Query(60, ge=1, le=1000),
@@ -199,6 +236,14 @@ def list_books(
         query = query.where(func.lower(Book.authors).like(_like(author), escape="\\"))
     if series:
         query = query.where(Book.series == series)
+    if folder is not None:
+        # только книги, лежащие прямо в этой папке (без вложенных)
+        f = folder.strip("/")
+        if f:
+            esc = f.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            query = query.where(Book.key.like(f"{esc}/%", escape="\\"), Book.key.not_like(f"{esc}/%/%", escape="\\"))
+        else:
+            query = query.where(Book.key.not_like("%/%"))
     if shelf is not None:
         sh = db.get(Shelf, shelf)
         if not sh or (sh.owner_id != user.id and not sh.is_shared):

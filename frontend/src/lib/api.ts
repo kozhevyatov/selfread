@@ -80,8 +80,18 @@ export type Book = {
   duration: number;
   cover: string | null;
   library_id: number;
+  /** папка книги от корня медиатеки («Толстой/Война и мир»), "" — корень */
+  folder: string;
   created_at: string;
   state: ReadState;
+};
+
+export type FolderListing = {
+  library: { id: number; name: string } | null;
+  path: string;
+  parent: string | null;
+  books_here: number;
+  folders: { name: string; path: string; count: number }[];
 };
 
 export type BookFile = {
@@ -274,6 +284,8 @@ export type BookQuery = {
   shelf?: number;
   author?: string;
   series?: string;
+  /** только книги прямо в этой папке медиатеки ("" — корень) */
+  folder?: string;
   sort?: string;
   offset?: number;
   limit?: number;
@@ -540,6 +552,7 @@ export const api = {
 
   home: () => request<Home>("/api/home"),
   libraries: () => request<MyLibrary[]>("/api/libraries"),
+  folders: (libraryId: number, path = "") => request<FolderListing>(`/api/libraries/${libraryId}/folders${qs({ path })}`),
 
   books: {
     list: (p: BookQuery = {}) => request<BookList>(`/api/books${qs(p)}`),

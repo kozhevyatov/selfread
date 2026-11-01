@@ -8,4 +8,6 @@ try {
   document.documentElement.classList.toggle("dark", p === "library");
   var colors = { paper: "#F6F1E7", ink: "#EEF1F5", library: "#14231D" };
   document.querySelector('meta[name="theme-color"]').setAttribute("content", colors[p] || colors.paper);
+  var cs = document.querySelector('meta[name="color-scheme"]');
+  if (cs) cs.setAttribute("content", p === "library" ? "only dark" : "only light");
 } catch (e) {}

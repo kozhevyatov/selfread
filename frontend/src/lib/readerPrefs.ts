@@ -152,7 +152,7 @@ export function bookCSS(p: ReaderPrefs) {
 @import url("${FONTS_CSS_URL}");
 @namespace epub "http://www.idpf.org/2007/ops";
 html {
-  color-scheme: ${t.dark ? "dark" : "light"};
+  color-scheme: only ${t.dark ? "dark" : "light"};
   background: ${t.bg} !important;
   color: ${t.fg} !important;
 }
@@ -183,6 +183,7 @@ p, li, blockquote, dd {
 a:link, a:visited { color: ${t.link} !important; }
 img, svg, video { max-width: 100%; height: auto; }
 ${t.dark ? "img { opacity: 0.9; }" : ""}
+@media (prefers-color-scheme: dark) { :root { --system-dark: 1; } }
 pre { white-space: pre-wrap !important; }
 aside[epub|type~="endnote"], aside[epub|type~="footnote"], aside[epub|type~="note"], aside[epub|type~="rearnote"] { display: none; }
 ::selection { background: ${t.link}55; }
