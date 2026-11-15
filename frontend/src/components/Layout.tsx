@@ -10,6 +10,7 @@ import {
   BookOpen,
   ChartColumn,
   ChevronRight,
+  Folder,
   CloudDownload,
   Ellipsis,
   CloudUpload,
@@ -39,6 +40,7 @@ const NAV = [
   { to: "/ebooks", label: "Электронные книги", icon: BookOpen },
   { to: "/audio", label: "Аудиокниги", icon: Headphones },
   { to: "/shelves", label: "Полки", icon: LibraryBig },
+  { to: "/folders", label: "Папки", icon: Folder },
 ];
 
 /** Второй блок меню: своё — цитаты, статистика, скачанное */
@@ -52,7 +54,7 @@ const TABS = [
   { to: "/", label: "Главная", icon: House },
   { to: "/books", label: "Книги", icon: Book },
   { to: "/audio", label: "Аудио", icon: Headphones },
-  { to: "/shelves", label: "Полки", icon: LibraryBig },
+  { to: "/folders", label: "Папки", icon: Folder },
   { to: "/more", label: "Ещё", icon: Ellipsis },
 ];
 

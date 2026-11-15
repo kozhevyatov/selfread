@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { BookGrid } from "@/components/books";
-import { BooksByFolder, FolderView } from "@/components/FolderView";
-import { Book as BookIcon, CloudUpload, Folder, Headphones, LayoutGrid, Search, X } from "@/components/icons";
+import { BooksByFolder, folderUrl } from "@/components/FolderView";
+import { Book as BookIcon, CloudUpload, Folder, Headphones, Search, X } from "@/components/icons";
 import { dialogs } from "@/lib/dialogs";
 import { PageHeader } from "@/components/Section";
-import { Button } from "@/components/ui/button";
+import { Button, buttonClass } from "@/components/ui/button";
 import { Select } from "@/components/ui/input";
 import { Empty, ErrorBox, PageLoader, Spinner } from "@/components/ui/misc";
 import { api, type BookKind, type ReadStatus } from "@/lib/api";
 import { booksLabel } from "@/lib/format";
 import { useQuery } from "@/lib/query";
-import { Link, setSearchParam, useParams, useSearchParams } from "@/lib/router";
+import { Link, navigate, setSearchParam, useParams, useSearchParams } from "@/lib/router";
 import { cn } from "@/lib/utils";
 
 const PAGE = 60;
@@ -48,9 +48,12 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
   const author = params.get("author") ?? "";
   const series = params.get("series") ?? "";
   const sort = params.get("sort") ?? (series ? "series" : "added");
-  // в медиатеке: обычный список или «Папки» — навигация как в проводнике
+  // старые ссылки «медиатека → Папки» ведут в раздел «Папки»
   const folderView = mode === "library" && params.get("view") === "folders";
   const folderPath = params.get("path") ?? "";
+  useEffect(() => {
+    if (folderView && libraryId) navigate(folderUrl(libraryId, folderPath), { replace: true });
+  }, [folderView, libraryId, folderPath]);
   const kind: BookKind | "" = mode === "audio" ? "audio" : mode === "ebook" ? "ebook" : ((params.get("kind") ?? "") as BookKind | "");
   const [limit, setLimit] = useState(PAGE);
   const [query, setQuery] = useState(q);
@@ -93,11 +96,18 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
       <PageHeader
         title={title}
         actions={
-          targets.data?.length ? (
-            <Button onClick={() => dialogs.upload(mode === "library" && targets.data?.some((t) => t.id === libraryId) ? libraryId : undefined)}>
-              <CloudUpload className="size-4" /> Загрузить
-            </Button>
-          ) : undefined
+          <>
+            {mode === "library" && libraryId ? (
+              <Link to={folderUrl(libraryId)} className={buttonClass("outline")}>
+                <Folder className="size-4" /> По папкам
+              </Link>
+            ) : null}
+            {targets.data?.length ? (
+              <Button onClick={() => dialogs.upload(mode === "library" && targets.data?.some((t) => t.id === libraryId) ? libraryId : undefined)}>
+                <CloudUpload className="size-4" /> Загрузить
+              </Button>
+            ) : null}
+          </>
         }
         subtitle={
           data ? (
@@ -117,34 +127,6 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
         }
       />
 
-      {mode === "library" && (
-        <div role="tablist" aria-label="Вид" className="-mt-2 flex gap-1 self-start rounded-xl bg-surface-2 p-1">
-          {(
-            [
-              [false, "Все книги", LayoutGrid],
-              [true, "Папки", Folder],
-            ] as const
-          ).map(([v, label, Icon]) => (
-            <button
-              key={label}
-              type="button"
-              role="tab"
-              aria-selected={folderView === v}
-              onClick={() => {
-                setSearchParam("path", null);
-                setSearchParam("view", v ? "folders" : null);
-              }}
-              className={cn("flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-sm font-semibold", folderView === v ? "bg-surface shadow-sm" : "text-muted hover:text-fg")}
-            >
-              <Icon className="size-4" /> {label}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {folderView && libraryId ? (
-        <FolderView libraryId={libraryId} path={folderPath} />
-      ) : (
       <>
       <div className="flex flex-col gap-3">
         <form onSubmit={searchSubmit} role="search" className="flex flex-wrap gap-3">
@@ -247,7 +229,6 @@ export default function BooksPage({ mode = "all" }: { mode?: "all" | "ebook" | "
         </>
       )}
       </>
-      )}
     </div>
   );
 }

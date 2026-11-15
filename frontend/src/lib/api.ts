@@ -86,13 +86,30 @@ export type Book = {
   state: ReadState;
 };
 
+export type FolderEntry = { name: string; path: string; count: number; ebooks: number; audio: number };
+
 export type FolderListing = {
-  library: { id: number; name: string } | null;
+  library: {
+    id: number;
+    name: string;
+    scope: "personal" | "shared";
+    book_count: number;
+    audio_count: number;
+    last_scan_at: string | null;
+    can_scan: boolean;
+  };
   path: string;
   parent: string | null;
+  /** false — такой папки в медиатеке нет (переименовали или ещё не просканирована) */
+  exists: boolean;
   books_here: number;
-  folders: { name: string; path: string; count: number }[];
+  here: { ebook: number; audio: number };
+  folders: FolderEntry[];
+  /** последняя начатая книга в этой папке (с подпапками) */
+  continue: Book | null;
 };
+
+export type FolderScanStatus = { running: boolean; this_library: boolean; done: number; total: number };
 
 export type BookFile = {
   name: string;
@@ -553,6 +570,9 @@ export const api = {
   home: () => request<Home>("/api/home"),
   libraries: () => request<MyLibrary[]>("/api/libraries"),
   folders: (libraryId: number, path = "") => request<FolderListing>(`/api/libraries/${libraryId}/folders${qs({ path })}`),
+  scanFolder: (libraryId: number, path = "") =>
+    request<{ queued: boolean; path: string }>(`/api/libraries/${libraryId}/scan${qs({ path })}`, { method: "POST", body: "{}" }),
+  scanStatus: (libraryId: number) => request<FolderScanStatus>(`/api/libraries/${libraryId}/scan`),
 
   books: {
     list: (p: BookQuery = {}) => request<BookList>(`/api/books${qs(p)}`),

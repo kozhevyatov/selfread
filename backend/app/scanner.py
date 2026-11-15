@@ -45,6 +45,12 @@ def key_hash(key: str) -> str:
     return hashlib.sha1(key.encode("utf-8", "surrogatepass")).hexdigest()
 
 
+def folder_of(key: str) -> str:
+    """Папка книги от корня медиатеки: «Толстой/Война и мир» (для аудиокниги — папка, где лежит её папка)."""
+    parent = PurePosixPath(key or ".").parent.as_posix()
+    return "" if parent == "." else parent
+
+
 def natural_key(s: str) -> list:
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", s)]
 
@@ -103,12 +109,25 @@ def _rel(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
 
 
-def discover(root: Path, stop: threading.Event | None = None) -> list[Found]:
-    """Найти все книги в папке медиатеки."""
+def subtree_root(sub: str) -> str:
+    """Папка для частичного сканирования: CD1/Disc 2 — часть книги из родительской папки, сканируем родителя."""
+    sub = sub.strip("/")
+    while sub and DISC_DIR.match(sub.rsplit("/", 1)[-1]):
+        sub = sub.rsplit("/", 1)[0] if "/" in sub else ""
+    return sub
+
+
+def in_subtree(key: str, sub: str) -> bool:
+    return not sub or key == sub or key.startswith(f"{sub}/")
+
+
+def discover(root: Path, stop: threading.Event | None = None, sub: str = "") -> list[Found]:
+    """Найти все книги в папке медиатеки (sub — только в этой подпапке, ключи всё равно от корня)."""
     ebooks: dict[str, Found] = {}
     audio: dict[str, Found] = {}
     visited: set[tuple[int, int]] = set()
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):
+    start = root / sub if sub else root
+    for dirpath, dirnames, filenames in os.walk(start, followlinks=True):
         if stop is not None and stop.is_set():
             break
         dirnames[:] = sorted((d for d in dirnames if not SKIP_DIR.match(d) and _utf8_ok(d)), key=natural_key)
@@ -346,19 +365,22 @@ class Scanner:
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        self._queue: list[tuple[int | None, bool]] = []
+        self._queue: list[tuple[int | None, bool, str]] = []
         self._after: list = []  # что сделать, когда очередь сканирования опустеет
-        self._status: dict = {"running": False, "library": None, "done": 0, "total": 0, "current": "", "started_at": None, "finished_at": None, "added": 0, "updated": 0, "removed": 0}
+        self._status: dict = {"running": False, "library": None, "library_id": None, "folder": "", "done": 0, "total": 0, "current": "", "started_at": None, "finished_at": None, "added": 0, "updated": 0, "removed": 0}
 
     def status(self) -> dict:
         with self._lock:
             return dict(self._status)
 
-    def start(self, library_id: int | None = None, full: bool = False) -> bool:
-        """Поставить сканирование в очередь (library_id=None — все медиатеки). Возвращает True, если запущено сейчас."""
+    def start(self, library_id: int | None = None, full: bool = False, sub: str = "") -> bool:
+        """Поставить сканирование в очередь (library_id=None — все медиатеки; sub — только эта папка медиатеки).
+        Возвращает True, если запущено сейчас."""
+        sub = subtree_root(sub) if library_id is not None else ""
         with self._lock:
-            if (library_id, full) not in self._queue:
-                self._queue.append((library_id, full))
+            # если вся медиатека уже в очереди — отдельная папка не нужна
+            if (library_id, full, sub) not in self._queue and (library_id, full, "") not in self._queue:
+                self._queue.append((library_id, full, sub))
             if self._thread is not None and self._thread.is_alive():
                 return False
             self._thread = threading.Thread(target=self._run, name="scanner", daemon=True)
@@ -401,7 +423,7 @@ class Scanner:
             with self._lock:
                 if not self._queue:
                     continue
-                library_id, full = self._queue.pop(0)
+                library_id, full, sub = self._queue.pop(0)
                 self._status.update(running=True, started_at=datetime.now(timezone.utc).isoformat(), added=0, updated=0, removed=0)
             try:
                 with session_scope() as db:
@@ -418,7 +440,7 @@ class Scanner:
                     with session_scope() as db:
                         lib = db.get(Library, lid)
                         if lib is not None:
-                            self.scan_library(db, lib, full)
+                            self.scan_library(db, lib, full, sub)
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Ошибка сканирования медиатеки %s", lid)
                     try:
@@ -431,23 +453,25 @@ class Scanner:
                     except Exception:  # noqa: BLE001
                         pass
 
-    def scan_library(self, db: Session, lib: Library, full: bool = False) -> None:
+    def scan_library(self, db: Session, lib: Library, full: bool = False, sub: str = "") -> None:
         root = Path(lib.path)
-        self._set(library=lib.name, done=0, total=0, current="")
+        self._set(library=lib.name, library_id=lib.id, folder=sub, done=0, total=0, current="")
         now = datetime.now(timezone.utc)
         if not root.is_dir():
             lib.last_scan_error = f"Папка не найдена: {lib.path}"
             lib.last_scan_at = now
             db.commit()
             return
+        if sub and not (root / sub).is_dir():
+            sub = ""  # папку удалили или переименовали — сканируем всю медиатеку
         try:
-            found_list = discover(root, self._stop)
+            found_list = discover(root, self._stop, sub)
         except OSError as exc:
             lib.last_scan_error = f"Нет доступа к папке: {exc}"
             lib.last_scan_at = now
             db.commit()
             return
-        existing = {b.key_hash: b for b in db.scalars(select(Book).where(Book.library_id == lib.id))}
+        existing = {b.key_hash: b for b in db.scalars(select(Book).where(Book.library_id == lib.id)) if in_subtree(b.key, sub)}
         seen: set[str] = set()
         self._set(total=len(found_list))
         added = updated = 0
@@ -457,6 +481,9 @@ class Scanner:
             book = existing.get(kh)
             fp = found.fingerprint()
             if book is not None and book.fingerprint == fp and not full:
+                if book.folder != folder_of(found.key):
+                    book.folder = folder_of(found.key)
+                    db.commit()
                 continue
             self._set(done=i, current=found.key)
             try:
@@ -470,13 +497,14 @@ class Scanner:
                     files = [{"path": info.rel, "format": f, "title": PurePosixPath(info.rel).stem, "duration": 0, "size": info.size, "index": n} for n, (f, info) in enumerate(found.files)]
             title, authors = _fallback_names(found)
             if book is None:
-                book = Book(library_id=lib.id, key=found.key, key_hash=kh, title=title, path="")
+                book = Book(library_id=lib.id, key=found.key, folder=folder_of(found.key), key_hash=kh, title=title, path="")
                 db.add(book)
                 existing[kh] = book
                 added += 1
             else:
                 updated += 1
             book.kind = found.kind
+            book.folder = folder_of(found.key)
             book.format = found.files[0][0]
             book.path = found.files[0][1].rel
             book.files = json.dumps(files, ensure_ascii=False)
@@ -512,7 +540,7 @@ class Scanner:
             self._status["updated"] += updated
             self._status["removed"] += removed
             self._status["done"] = len(found_list)
-        log.info("Медиатека «%s»: новых %s, обновлено %s, удалено %s", lib.name, added, updated, removed)
+        log.info("Медиатека «%s»%s: новых %s, обновлено %s, удалено %s", lib.name, f" ({sub})" if sub else "", added, updated, removed)
 
     @staticmethod
     def _update_counts(db: Session, lib: Library) -> None:

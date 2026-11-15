@@ -1,5 +1,5 @@
 /** «Ещё» на телефоне: разделы, которым не хватило места в нижнем меню. */
-import { BookOpen, ChevronRight, CloudUpload, Palette, Search, Shield, User } from "@/components/icons";
+import { BookOpen, ChevronRight, CloudUpload, LibraryBig, Palette, Search, Shield, User } from "@/components/icons";
 import { MINE } from "@/components/Layout";
 import { useAuth } from "@/lib/auth";
 import { dialogs } from "@/lib/dialogs";
@@ -10,6 +10,7 @@ export default function MorePage() {
   const items = [
     { to: "/search", label: "Поиск", icon: Search },
     { to: "/ebooks", label: "Электронные книги", icon: BookOpen },
+    { to: "/shelves", label: "Полки", icon: LibraryBig },
     ...MINE,
     { to: "/profile", label: "Профиль", icon: User },
     { to: "/profile?tab=appearance", label: "Оформление", icon: Palette },

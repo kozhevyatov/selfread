@@ -9,11 +9,11 @@ import subprocess
 import tempfile
 import threading
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, true
 from sqlalchemy.orm import Session
 
 from ..access import allowed_library_ids, can_write, fs_writable
@@ -21,7 +21,7 @@ from ..config import DATA_DIR
 from ..db import get_db
 from ..models import Book, Library, ReadState, Shelf, ShelfBook, User
 from ..bookmeta import IMAGE_EXT
-from ..scanner import cover_path, scanner
+from ..scanner import cover_path, folder_of, natural_key, scanner, subtree_root
 from ..schemas import StateUpdate
 from ..security import get_current_user, get_media_user
 
@@ -84,12 +84,6 @@ def _state_out(state: ReadState | None) -> dict:
     }
 
 
-def folder_of(key: str) -> str:
-    """Папка книги от корня медиатеки: «Толстой/Война и мир» (для аудиокниги — папка, где лежит её папка)."""
-    parent = PurePosixPath(key or ".").parent.as_posix()
-    return "" if parent == "." else parent
-
-
 def book_brief(book: Book, state: ReadState | None = None) -> dict:
     return {
         "id": book.id,
@@ -105,7 +99,7 @@ def book_brief(book: Book, state: ReadState | None = None) -> dict:
         "duration": book.duration,
         "cover": _cover(book),
         "library_id": book.library_id,
-        "folder": folder_of(book.key),
+        "folder": book.folder if book.folder is not None else folder_of(book.key),
         "created_at": book.created_at,
         "state": _state_out(state),
     }
@@ -156,30 +150,104 @@ def my_libraries(db: Session = Depends(get_db), user: User = Depends(get_current
     ]
 
 
+def _esc_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _in_folder(base: str):  # noqa: ANN202
+    """Условие «книга в папке base или во вложенных»."""
+    if not base:
+        return true()
+    return or_(Book.folder == base, Book.folder.like(f"{_esc_like(base)}/%", escape="\\"))
+
+
+def _library_for(db: Session, user: User, library_id: int) -> Library:
+    lib = db.get(Library, library_id)
+    if not lib or library_id not in allowed_library_ids(db, user, scoped=False):
+        raise HTTPException(404, "Медиатека не найдена")
+    return lib
+
+
+def _can_scan(db: Session, user: User, lib: Library) -> bool:
+    return bool(user.is_admin or can_write(db, user, lib))
+
+
 @router.get("/libraries/{library_id}/folders")
 def library_folders(library_id: int, path: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
-    """Папки медиатеки на уровне path: вложенные папки с числом книг внутри (с подпапками)."""
-    if library_id not in allowed_library_ids(db, user, scoped=False):
-        raise HTTPException(404, "Медиатека не найдена")
-    lib = db.get(Library, library_id)
+    """Папка медиатеки: вложенные папки (сколько в них книг и аудиокниг, с подпапками),
+    сколько книг лежит прямо здесь и что продолжить читать или слушать в этой папке."""
+    lib = _library_for(db, user, library_id)
     base = path.strip("/")
     prefix = f"{base}/" if base else ""
-    counts: dict[str, int] = {}
-    here = 0
-    for key in db.scalars(select(Book.key).where(Book.library_id == library_id)):
-        folder = folder_of(key)
+    rows = db.execute(
+        select(Book.folder, Book.kind, func.count()).where(Book.library_id == library_id, _in_folder(base)).group_by(Book.folder, Book.kind)
+    ).all()
+    here = {"ebook": 0, "audio": 0}
+    children: dict[str, dict[str, int]] = {}
+    for folder, kind, count in rows:
+        folder = folder or ""
+        kind = kind if kind in here else "ebook"
         if folder == base:
-            here += 1
-        elif folder.startswith(prefix) or (not base and folder):
+            here[kind] += count
+        elif not base or folder.startswith(prefix):
             name = folder[len(prefix) :].split("/", 1)[0]
-            counts[name] = counts.get(name, 0) + 1
-    parent = None if not base else ("/".join(base.split("/")[:-1]))
+            c = children.setdefault(name, {"ebook": 0, "audio": 0})
+            c[kind] += count
+    # что продолжить: последняя открытая и не дочитанная книга в этой папке (с подпапками)
+    last = db.execute(
+        select(Book, ReadState)
+        .join(ReadState, and_(ReadState.book_id == Book.id, ReadState.user_id == user.id))
+        .where(Book.library_id == library_id, _in_folder(base), ReadState.status.in_(("reading", "none", "want")), ReadState.progress > 0)
+        .order_by(ReadState.updated_at.desc())
+        .limit(1)
+    ).first()
+    parent = None if not base else "/".join(base.split("/")[:-1])
     return {
-        "library": {"id": lib.id, "name": lib.name} if lib else None,
+        "library": {
+            "id": lib.id,
+            "name": lib.name,
+            "scope": "personal" if lib.owner_id else "shared",
+            "book_count": lib.book_count,
+            "audio_count": lib.audio_count,
+            "last_scan_at": lib.last_scan_at,
+            "can_scan": _can_scan(db, user, lib),
+        },
         "path": base,
         "parent": parent,
-        "books_here": here,
-        "folders": [{"name": n, "path": f"{prefix}{n}", "count": c} for n, c in sorted(counts.items(), key=lambda x: x[0].lower())],
+        "exists": bool(rows) or not base,
+        "books_here": here["ebook"] + here["audio"],
+        "here": here,
+        "folders": [
+            {"name": n, "path": f"{prefix}{n}", "count": c["ebook"] + c["audio"], "ebooks": c["ebook"], "audio": c["audio"]}
+            for n, c in sorted(children.items(), key=lambda x: natural_key(x[0]))
+        ],
+        "continue": book_brief(last[0], last[1]) if last else None,
+    }
+
+
+@router.post("/libraries/{library_id}/scan")
+def scan_folder(library_id: int, path: str = "", db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Пересканировать папку медиатеки (с подпапками) — не дожидаясь сканирования по расписанию."""
+    lib = _library_for(db, user, library_id)
+    if not _can_scan(db, user, lib):
+        raise HTTPException(403, "Сканировать эту медиатеку может владелец или администратор")
+    if not lib.enabled:
+        raise HTTPException(400, "Медиатека отключена")
+    scanner.start(library_id=lib.id, sub=path.strip("/"))
+    return {"queued": True, "path": subtree_root(path)}
+
+
+@router.get("/libraries/{library_id}/scan")
+def scan_folder_status(library_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> dict:
+    """Идёт ли сейчас сканирование (без подробностей о чужих медиатеках)."""
+    _library_for(db, user, library_id)
+    st = scanner.status()
+    mine = st.get("running") and st.get("library_id") == library_id
+    return {
+        "running": bool(st.get("running")),
+        "this_library": bool(mine),
+        "done": st.get("done", 0) if mine else 0,
+        "total": st.get("total", 0) if mine else 0,
     }
 
 
@@ -192,7 +260,7 @@ SORTS = {
     "series": (Book.series.asc(), Book.series_index.asc(), Book.sort_title.asc()),
     "year": (Book.year.desc(), Book.sort_title.asc()),
     # как на диске: по медиатекам и папкам, внутри папки — по названию файла
-    "folder": (Book.library_id.asc(), Book.key.asc()),
+    "folder": (Book.library_id.asc(), Book.folder.asc(), Book.key.asc()),
 }
 
 
@@ -238,12 +306,7 @@ def list_books(
         query = query.where(Book.series == series)
     if folder is not None:
         # только книги, лежащие прямо в этой папке (без вложенных)
-        f = folder.strip("/")
-        if f:
-            esc = f.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            query = query.where(Book.key.like(f"{esc}/%", escape="\\"), Book.key.not_like(f"{esc}/%/%", escape="\\"))
-        else:
-            query = query.where(Book.key.not_like("%/%"))
+        query = query.where(Book.folder == folder.strip("/"))
     if shelf is not None:
         sh = db.get(Shelf, shelf)
         if not sh or (sh.owner_id != user.id and not sh.is_shared):

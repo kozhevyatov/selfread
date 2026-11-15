@@ -127,6 +127,8 @@ class Book(Base):
     kind: Mapped[str] = mapped_column(String(8), default="ebook", index=True)
     # Ключ книги: «папка/имя-без-расширения» (ebook) или «папка» (аудиокнига) — от корня медиатеки
     key: Mapped[str] = mapped_column(Text)
+    # Папка, где лежит книга (для аудиокниги — папка, где лежит её папка), от корня медиатеки; "" — корень
+    folder: Mapped[str] = mapped_column(Text, default="")
     key_hash: Mapped[str] = mapped_column(String(40))
     # Основной формат (epub, fb2, pdf, …, m4b, mp3) и путь к основному файлу от корня медиатеки
     format: Mapped[str] = mapped_column(String(8), default="", index=True)

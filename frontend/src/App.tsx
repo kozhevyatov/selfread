@@ -12,6 +12,7 @@ import BookPage from "@/pages/BookPage";
 import BooksPage from "@/pages/BooksPage";
 import HomePage from "@/pages/HomePage";
 import DownloadsPage from "@/pages/DownloadsPage";
+import FoldersPage from "@/pages/FoldersPage";
 import LoginPage from "@/pages/LoginPage";
 import MorePage from "@/pages/MorePage";
 import ProfilePage from "@/pages/ProfilePage";
@@ -83,6 +84,8 @@ export default function App() {
           { path: "/libraries/:id", element: <BooksPage mode="library" /> },
           { path: "/books/:id", element: <BookPage /> },
           { path: "/read/:id", element: <ReaderPage /> },
+          { path: "/folders", element: <FoldersPage /> },
+          { path: "/folders/:id", element: <FoldersPage /> },
           { path: "/shelves", element: <ShelvesPage /> },
           { path: "/shelves/:id", element: <ShelfPage /> },
           { path: "/quotes", element: <QuotesPage /> },
