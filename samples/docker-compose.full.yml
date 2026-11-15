@@ -1,0 +1,44 @@
+# SelfRead и MariaDB в одном файле: база поднимается вместе с сервисом.
+# Пароли — в файле .env рядом (пример — samples/.env.example). Запуск: docker compose up -d
+name: selfread
+
+services:
+  selfread:
+    image: ghcr.io/kozhevyatov/selfread:latest
+    container_name: selfread
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${SELFREAD_PORT:-1334}:1334"
+    volumes:
+      - ./data:/data                            # ключ, обложки, кэш
+      - ./media:/uploads                        # личные медиатеки пользователей
+      - ${BOOKS_DIR:-./books}:/library/books:ro
+      - ${AUDIOBOOKS_DIR:-./audiobooks}:/library/audiobooks:ro
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      DATABASE_URL: "mysql+pymysql://selfread:${DB_PASSWORD:?задайте DB_PASSWORD в .env}@db:3306/selfread?charset=utf8mb4"
+      # SETUP_TOKEN: "длинная-случайная-строка"
+
+  db:
+    image: mariadb:11
+    container_name: selfread-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: selfread
+      MARIADB_USER: selfread
+      MARIADB_PASSWORD: ${DB_PASSWORD:?задайте DB_PASSWORD в .env}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?задайте DB_ROOT_PASSWORD в .env}
+      MARIADB_AUTO_UPGRADE: "1"
+      TZ: ${TZ:-Europe/Moscow}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - ./mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s

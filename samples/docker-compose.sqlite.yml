@@ -1,0 +1,26 @@
+# SelfRead со встроенной базой SQLite — самый простой вариант.
+# База, ключ, обложки и кэш лежат в ./data. Запуск: docker compose up -d
+name: selfread
+
+services:
+  selfread:
+    image: ghcr.io/kozhevyatov/selfread:latest
+    container_name: selfread
+    restart: unless-stopped
+    ports:
+      - "1334:1334"
+    volumes:
+      - ./data:/data                            # база SQLite, ключ, обложки, кэш
+      - ./media:/uploads                        # личные медиатеки пользователей: <логин>/books
+      # Папки с книгами: всё внутри /library видно в «обзоре папок» при создании медиатеки.
+      # :ro — только чтение (загружать туда из браузера нельзя; уберите :ro, если нужно).
+      - /path/to/books:/library/books:ro
+      - /path/to/audiobooks:/library/audiobooks:ro
+    environment:
+      TZ: Europe/Moscow
+      # База задана здесь — шаг выбора БД в мастере первого запуска пропускается.
+      DATABASE_URL: "sqlite:////data/selfread.db"
+      # Без токена мастер первого запуска открывается только из локальной сети.
+      # SETUP_TOKEN: "длинная-случайная-строка"
+    # Чтобы файлы принадлежали вашему пользователю, а не root (uid:gid — команда id):
+    # user: "1000:1000"

@@ -22,3 +22,6 @@ frontend/dist/
 .vscode/
 *.log
 docker-compose.override.yml
+
+# локальная инструкция по развёртыванию (ссылки на свой Gitea и NAS) — не публикуем
+README.local.md

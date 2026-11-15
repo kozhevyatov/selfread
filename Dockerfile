@@ -1,5 +1,5 @@
 # ---------- 1. Сборка фронтенда ----------
-FROM node:22-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:22-alpine AS frontend
 WORKDIR /src
 COPY frontend/package*.json ./
 RUN npm install --no-audit --no-fund

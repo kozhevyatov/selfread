@@ -1,0 +1,38 @@
+# SelfRead с уже работающей базой MariaDB / MySQL на сервере.
+# Базу и пользователя создайте заранее:
+#   CREATE DATABASE selfread CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+#   CREATE USER 'selfread'@'%' IDENTIFIED BY 'PASSWORD';
+#   GRANT ALL PRIVILEGES ON selfread.* TO 'selfread'@'%';
+# Таблицы SelfRead создаст сам при запуске. Запуск: docker compose up -d
+name: selfread
+
+services:
+  selfread:
+    image: ghcr.io/kozhevyatov/selfread:latest
+    container_name: selfread
+    restart: unless-stopped
+    ports:
+      - "1334:1334"
+    volumes:
+      - ./data:/data                            # ключ, обложки, кэш (сама база — на сервере БД)
+      - ./media:/uploads                        # личные медиатеки пользователей
+      - /path/to/books:/library/books:ro
+      - /path/to/audiobooks:/library/audiobooks:ro
+    environment:
+      TZ: Europe/Moscow
+      # Хост базы:
+      #  - MariaDB установлена на этом же сервере (не в Docker) — host.docker.internal;
+      #  - MariaDB в другом контейнере — имя контейнера, а сам контейнер — в общей сети (см. networks ниже);
+      #  - на другой машине — её IP или имя.
+      # Спецсимволы в пароле (@ : / ? #) замените на %-коды: @ → %40, : → %3A.
+      DATABASE_URL: "mysql+pymysql://selfread:PASSWORD@host.docker.internal:3306/selfread?charset=utf8mb4"
+      # SETUP_TOKEN: "длинная-случайная-строка"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Если MariaDB — контейнер в существующей сети Docker (например, db):
+    # networks:
+    #   - db
+
+# networks:
+#   db:
+#     external: true

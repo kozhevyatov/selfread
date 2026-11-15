@@ -84,7 +84,7 @@ function GeneralTab() {
           className="flex flex-wrap items-end gap-3"
         >
           <div className="min-w-60 flex-1">
-            <Field id="public-url" label="Внешний адрес сервиса" hint="Например, https://read.nskarl.ru. Пригодится для ссылок и каталога OPDS.">
+            <Field id="public-url" label="Внешний адрес сервиса" hint="Например, https://read.example.com. Пригодится для ссылок и каталога OPDS.">
               <Input id="public-url" type="url" placeholder={window.location.origin} value={url} onChange={(e) => setUrl(e.target.value)} />
             </Field>
           </div>
